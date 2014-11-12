@@ -1,0 +1,679 @@
+
+\documentclass[12pt]{article}
+
+\usepackage{amsmath}
+\usepackage{graphicx}
+\usepackage{color}
+\usepackage{xspace}
+\usepackage{fancyvrb}
+\usepackage[
+         colorlinks=true,
+         linkcolor=blue,
+         citecolor=blue,
+         urlcolor=blue]
+         {hyperref}
+         
+\usepackage[default]{jasa_harvard}   
+%\usepackage{JASA_manu}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\setlength{\oddsidemargin}{-.25 truein}
+\setlength{\evensidemargin}{0truein}
+\setlength{\topmargin}{-0.2truein}
+\setlength{\textwidth}{7 truein}
+\setlength{\textheight}{8.5 truein}
+\setlength{\parindent}{0truein}
+\setlength{\parskip}{0.07truein}
+
+\definecolor{darkred}{rgb}{0.6,0.0,0}
+\definecolor{darkblue}{rgb}{.165, 0, .659}
+\definecolor{grey}{rgb}{0.85,0.85,0.85}
+\definecolor{darkorange}{rgb}{1,0.54,0}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+\newcommand{\bld}[1]{\mbox{\boldmath $#1$}}
+\newcommand{\shell}[1]{\mbox{$#1$}}
+\renewcommand{\vec}[1]{\mbox{\bf {#1}}}
+
+\newcommand{\ReallySmallSpacing}{\renewcommand{\baselinestretch}{.6}\Large\normalsize}
+\newcommand{\SmallSpacing}{\renewcommand{\baselinestretch}{1.1}\Large\normalsize}
+
+\newcommand{\halfs}{\frac{1}{2}}
+
+\DefineVerbatimEnvironment{Sinput}{Verbatim}{fontshape=sl,formatcom=\color{darkblue}}
+\fvset{fontsize=\footnotesize}
+
+\newcommand{\website}[1]{{\textsf{#1}}}
+\newcommand{\code}[1]{\mbox{\footnotesize\color{darkblue}\texttt{#1}}}
+\newcommand{\pkg}[1]{{\fontseries{b}\selectfont #1}}
+\renewcommand{\pkg}[1]{{\textsf{#1}}}
+\newcommand{\todo}[1]{TODO: {\bf \textcolor{darkred}{#1}}}
+\newcommand{\Dag}{$^\dagger$}
+\newcommand{\Ast}{$^\ast$}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\begin{document}
+
+<<startup,echo=FALSE>>=
+opts_chunk$set(tidy=FALSE,message=FALSE,size='footnotesize',
+               background = 'white',comment=NA, digits = 3,
+               prompt = TRUE)
+@
+
+
+\title{ Exercises for  \\ {\it Applied Predictive Modeling} \\ Chapter 3 --- Data Pre--Processing}
+\author{Max Kuhn, Kjell Johnson}
+\date{Version 1\\ \today}
+
+
+<<ch03_startup, echo = FALSE, results='hide',message=FALSE>>=
+library(caret)
+library(AppliedPredictiveModeling)
+library(mlbench)
+library(vcd)
+library(corrplot)
+
+options(width = 105)
+textList <- function (x, period = FALSE, last = " and ")
+{
+    if (!is.character(x))
+        x <- as.character(x)
+    numElements <- length(x)
+    out <- if (length(x) > 0) {
+        switch(min(numElements, 3), x, paste(x, collapse = last),
+            {
+                x <- paste(x, c(rep(",", numElements - 2), last,
+                  ""), sep = "")
+                paste(x, collapse = " ")
+            })
+    }
+    else ""
+    if (period)
+        out <- paste(out, ".", sep = "")
+    out
+}
+hook_inline = knit_hooks$get('inline')
+knit_hooks$set(inline = function(x) {
+  if (is.character(x)) highr::hi_latex(x) else hook_inline(x)
+})
+knit_theme$set("bclear")
+options(width = 80)
+@
+
+\newcommand{\knnum}[1]{{\tt \small \hlnum{#1}}}
+\newcommand{\knarg}[1]{{\tt \small \hlkwc{#1}}}
+\newcommand{\knfun}[1]{{\tt \small \hlkwd{#1}}}
+\newcommand{\knlstr}[1]{{\tt \small \hlstr{#1}}}
+
+\maketitle
+
+\thispagestyle{empty}
+      
+The solutions in this file use several \pkg{R} packages not used in the text. To install all of the packages needed for this document, use:
+
+<<ch03_install, eval = FALSE>>=
+install.packages(c("AppliedPredictiveModeling", "car", "caret", "corrplot", 
+                   "e1071", "mlbench", "subselect", "reshape2", "vcd"))
+@
+      
+One note about these exercises: the type and amount tot pre--processing is dependent on the model being used. The results shown here are appropriate for models that have significant pre--processing requirements of the predictor variables. 
+      
+\section*{Exercise 1}
+<<ch03_preProcessAD, results='hide', echo = FALSE>>=
+data(Glass)
+data(Soybean)
+@
+
+\label{P:PreProcessGlass}
+The UC Irvine Machine Learning Repository\footnote{\website{http://archive.ics.uci.edu/ml/index.html}} contains a data set related to glass identification. The data consist of \Sexpr{nrow(Glass)} glass samples labeled as one of seven class categories. There are \Sexpr{ncol(Glass)-1} predictors, including the refractive index and percentages of  \Sexpr{ncol(Glass)-2} elements: \Sexpr{textList(names(Glass[,-c(1, ncol(Glass))]))}.
+
+The data can be accessed via:
+<<ch03_preProcessAD2>>=
+library(mlbench)
+data(Glass)
+str(Glass)
+@
+
+\begin{itemize}
+  \item[] (a) Using visualizations, explore the predictor variables to understand their distributions as well as the relationships between predictors.
+  \item[] (b) Does there appear to be any outliers in the data? Are predictors skewed?
+  \item[](c) Are there any relevant transformations of one or more predictors that might improve the classification model?
+\end{itemize}
+
+\subsection*{Solutions}
+
+To examine the predictor distributions, individual histograms or density plots are useful. To look at them in a single plot, we will first ``melt'' the data into a ``long'' format so that predictors are not in separate columns:
+
+<<ch03_melted_glass>>=
+library(reshape2)
+meltedGlass <- melt(Glass, id.vars = "Type")
+head(meltedGlass)
+@
+
+Now, we can use the \pkg{lattice} function \knfun{densityplot} to look at each predictor. The code used to create Figure \ref{F:Glass_dens} is:
+
+<<ch03_Glass_dens_print, eval = FALSE>>=
+library(lattice)
+densityplot(~value|variable, 
+            data = meltedGlass, 
+            ## Adjust each axis so that the measurement scale is
+            ## different for each panel
+            scales = list(x = list(relation = "free"), 
+                          y = list(relation = "free")),
+            ## 'adjust' smooths the curve out
+            adjust = 1.25, 
+            ## change the symbol on the rug for each data point
+            pch = "|",
+            xlab = "Predictor")
+@
+
+From Figure \ref{F:Glass_dens}, we can see that \texttt{K} and \texttt{Mg} appear to have possible second modes around zero and that several predictors (\texttt{Ca}, \texttt{Ba}, \texttt{Fe} and \texttt{RI}) show signs of skewness. There may be one or two outliers in \texttt{K}, but they could simply be due to natueral skewness. Also, predictors \texttt{Ca}, \texttt{RI}, \texttt{Na} and \texttt{Si} have concentrations of samples in the middle of the scale and a small number of data points at the edges of the distribution. This characteristic is indicative of a ``heavy--tailed'' distribution. 
+
+\begin{figure}
+  \begin{center}  
+<<ch03_Glass_dens, echo = FALSE,out.width='.8\\linewidth',fig.width=10,fig.height=6>>=
+bookTheme()
+densityplot(~value|variable, 
+            data = meltedGlass, 
+            scales = list(x = list(relation = "free"), 
+                          y = list(relation = "free")), 
+            adjust = 1.25, 
+            pch = "|",
+            xlab = "Predictor")
+@
+    \caption{Density plots of each of the predictors in the original Glass data set. The points along the $x$--axis show the values of the individual samples. }
+    \label{F:Glass_dens}
+  \end{center}
+\end{figure}
+
+A scatterplot matrix can also be helpful to visualize a data set of this size (i.e. 9 predictor variables). The \pkg{lattice} function \knfun{splom} was used to create the scatterplot matrix in Figure \ref{F:Glass_splom}.  This visualization highlights several other important characteristics of this data:
+
+\begin{enumerate}
+\item The measurements of some glass types, specifically \texttt{Fe}, \texttt{Ba}, \texttt{K} and \texttt{Mg}, are zero. This creates a ``mixture distribution'' of points; one distribution consists of glass types containing the element in question whereas the other does not. This finding implies that the samples in these distributions may not behave in the same manner.  
+\item Most predictors are uncorrelated with the exception of pairs \texttt{Ca}/\texttt{RI} and \texttt{Ca}/\texttt{Na}.
+\item Many of the pair--wise combinations have very non--standard distributions (i.e. heavy tails or mixtures of distributions). 
+\item It is difficult to tell if the extreme point in the \texttt{K} data is an outlier or just a artifact of a skewed distribution that has not been sampled enough. In either case, this should be accounted for through the modeling, preferably by using models that are resistant to outliers. 
+\end{enumerate}
+
+
+\setkeys{Gin}{width=.85\textwidth}
+\begin{figure}
+  \begin{center}  
+<<ch03_Glass_splom, echo = FALSE,out.width='.8\\linewidth',fig.width=9,fig.height=9>>=
+splom(~Glass[, -10], pch = 16, col = rgb(.2, .2, .2, .4), cex = .7)
+@
+    \caption{A scatterplot matrix of the predictors in the original Glass data set.}
+    \label{F:Glass_splom}
+  \end{center}
+\end{figure}
+
+Would transformations help these data? Based on our findings above, we need to investigate transformations of individual predictors that will resolve skewness and/or outliers (e.g. the spatial sign transformation). 
+
+For skewness, first note that several predictors have values of zero. This excludes transformations such as the log transformation or the Box--Cox family of transformations.  When we are faced with predictors containing zero values, the Yeo--Johnson family of transformations can be helpful\footnote{We were not aware of this set of transformation at the time when the text was written. } \cite{yeo2000new}.  This family of transformations is very similar to the Box--Cox transformation, but can handle zero or negative predictor values.  The transformation can be estimated using \pkg{caret}'s \knfun{preProcess} function:
+
+<<ch03_Glass_yj, results='hide'>>=
+yjTrans <- preProcess(Glass[, -10], method = "YeoJohnson")
+yjData <- predict(yjTrans, newdata= Glass[, -10])
+melted <- melt(yjData)
+@
+
+The resulting density plots are shown in Figure \ref{F:Glass_dens_trans}. The only substantive change relative to the original distributions is that a second mode was induced for predictors \texttt{Ba} and \texttt{Fe}. Given these results, this transformation did not seem to improve the data (in terms of skewness).
+
+\setkeys{Gin}{width=.8\textwidth}
+\begin{figure}
+  \begin{center}  
+<<ch03_Glass_dens_trans, echo = FALSE,out.width='.8\\linewidth',fig.width=10,fig.height=6>>=
+bookTheme()
+densityplot(~value|variable, 
+            data = melted, 
+            scales = list(x = list(relation = "free"), 
+                          y = list(relation = "free")), 
+            adjust = 1.25, 
+            pch = "|",
+            xlab = "Predictor")
+@
+    \caption{Density plots of the Glass predictors after a Yeo--Johnson transformation. }
+    \label{F:Glass_dens_trans}
+  \end{center}
+\end{figure}
+
+Next, we will apply the spatial sign transformation to attempt to mitigate outliers.  For this data, we first center and scale the data, then apply the transformation:
+
+<<ch03_Glass_ss, eval = FALSE>>=
+centerScale <- preProcess(Glass[, -10], method = c("center", "scale"))
+csData <- predict(centerScale, newdata = Glass[, -10])
+ssData <- spatialSign(csData)
+splom(~ssData, pch = 16, col = rgb(.2, .2, .2, .4), cex = .7)
+@
+
+Figure \ref{F:Glass_splom_ss} shows the results. Many of the possible outliers have been contracted into the mainstream of the data. This transformation did result in at least one new pattern: the samples with zero values for both \texttt{Fe} and \texttt{B} are now projected onto a straight line in these two dimensions. 
+
+\begin{figure}
+  \begin{center}  
+<<ch03_Glass_splom_ss, echo = FALSE,out.width='.8\\linewidth',fig.width=9,fig.height=9>>=
+centerScale <- preProcess(Glass[, -10], method = c("center", "scale"))
+csData <- predict(centerScale, newdata = Glass[, -10])
+ssData <- spatialSign(csData)
+splom(~ssData, pch = 16, col = rgb(.2, .2, .2, .4), cex = .7)
+@
+    \caption{A scatterplot matrix of the Glass data after the spatial sign transformation.}
+    \label{F:Glass_splom_ss}
+  \end{center}
+\end{figure}
+
+While we were unable to resolve skewness in this data via transformations, we were able to minimize the number of unusually extreme observations.  Note that attempts to pre--process data to resolve predictor distribution problems are not always successful.  Our best efforts in pre--processing may not yield highly desirable transformed values.  Under these kinds of circumstances, we will need to use models that are not unduly affected by skewed distributions (e.g. tree--based methods).  
+
+
+\clearpage
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section*{Exercise 2}
+\label{P:PreProcessSoybeans}
+The Soybean data can also be found at the UC Irvine Machine Learning Repository. Data were collected to predict disease in \Sexpr{nrow(Soybean)} soybeans. The \Sexpr{ncol(Soybean)-1} predictors are mostly categorical and include information on the environmental conditions (e.g. temperature, precipitation) and plant conditions (e.g. left spots, mold growth). The outcome labels consist of \Sexpr{length(levels(Soybean$Class))} distinct classes.
+
+The data can be loaded via:
+
+<<ch03_preProcessSoy>>=
+library(mlbench)
+data(Soybean)
+## See ?Soybean for details
+@
+
+\begin{itemize}
+  \item[] (a) Investigate the frequency distributions for the categorical predictors. Are the distributions likely to cause issues for models.
+  \item[] (b) Roughly \Sexpr{round(mean(!complete.cases(Soybean))*100)}$\%$ of the data are missing. Are there particular predictors that are more likely to be missing? Is the pattern of missing data related to the classes?
+  \item[](c) Develop a strategy for dealing with the missing data, either by eliminating predictors or imputation.
+\end{itemize}
+
+\subsection*{Solutions}
+The contents of the Soybean data frame are:
+
+<<ch03_Soy1data>>=
+str(Soybean)
+@
+
+When we look closely at this output, we see that the factor levels of some predictors are not informative. For example, the \texttt{temp} column contains integer values.  These values correspond the relative temperature: below average, average and above average.  For our understanding of the data, it would be very helpful to change these integer values to their actual values.  This change can be done using the \knfun{recode} function in  the \pkg{car} package.  We can also make missing values an independent category so that we see them in tables:
+
+<<ch03_recode>>=
+Soybean2 <- Soybean
+table(Soybean2$temp, useNA = "always")
+library(car)
+Soybean2$temp <- recode(Soybean2$temp, 
+                       "0 = 'low'; 1 = 'norm'; 2 = 'high'; NA = 'missing'",
+                       levels = c("low", "norm", "high", "missing"))
+table(Soybean2$temp)
+@
+
+For this part of the solution to this problem, we will look at the relationship between the months, temperature and precipitation.  To explore these relationships, we need to recode months and precipitation:
+
+<<ch03_recode2>>=
+table(Soybean2$date, useNA = "always")
+Soybean2$date <- recode(Soybean2$date, 
+                       "0 ='apr';1='may';2='june';3='july';4='aug';5='sept';6='oct';NA = 'missing'",
+                       levels = c("apr", "may", "june", "july", "aug", "sept", "missing"))
+table(Soybean2$date)
+
+table(Soybean2$precip, useNA = "always")
+Soybean2$precip <- recode(Soybean2$precip, 
+                       "0 = 'low'; 1 = 'norm'; 2 = 'high'; NA = 'missing'",
+                       levels = c("low", "norm", "high", "missing"))
+table(Soybean2$precip)
+@
+
+To start, let's look at the date predictor. Are the months represented equally? From the table above, we can see that June through September have the most data and that there is a single missing value. For precipitation (ironically) most of the data are above average. In addition, the temperature and precipitation columns have missing value rates of about 5$\%$. 
+
+Like the previous problems, we should examine the pair-wise or joint distributions of these predictors.  Joint distributions of factor predictors are often displayed in a contingency table.  There are also several ways that these distributions can be displayed in a graph. The \knfun{mosaic} function in the \pkg{vcd} package \cite{Hornik:2006tv} and the \knarg{barchart} function in the \pkg{lattice} package are two options.  What does the joint distribution of temperature and month look like? First, we will use a mosaic plot:
+
+<<ch03_Soy_mosaic1, eval = FALSE,out.width='.6\\linewidth',fig.width=5,fig.height=5>>=
+library(vcd)
+## mosaic() can table a table or a formula:
+mosaic(~date + temp, data = Soybean2)
+@
+
+Alternatively, a bar chart can also be used:
+
+<<ch03_Soy_barchart1, eval = FALSE>>=
+barchart(table(Soybean2$date, Soybean2$temp),
+         auto.key = list(columns = 4, title = "temperature"))
+@
+
+The results are shown in Figure \ref{F:Soy_biv}. Note that in the bar chart, the bars are not cumulative (i.e. missing values are not the most frequent). Here we see which months are the most frequent. Additionally, we see that average temperatures are the most frequent category within each month, although high temperatures are also very likely in September. Missing values are most likely in July. One useful option to \knfun{barchart} is \knarg{stack} to create stacked bars. 
+
+\setkeys{Gin}{width=1\textwidth}
+\begin{figure}
+  \begin{center}  
+<<ch03_Soy_mosaic2, echo = FALSE,out.width='.8\\linewidth',fig.width=6,fig.height=5>>=
+library(vcd)
+## mosaic() can accept a table or a formula:
+mosaic(~date + temp, data = Soybean2)
+@
+
+\vspace{.01in}
+
+<<ch03_Soy_barchart2, echo = FALSE,out.width='.8\\linewidth',fig.width=6,fig.height=3.9>>=
+barchart(table(Soybean2$date, Soybean2$temp),
+         auto.key = list(columns = 4, title = "temperature"))
+@
+    \caption{Mosaic and bar charts of the joint frequency distribution for month and temperature. }
+    \label{F:Soy_biv}
+  \end{center}
+\end{figure}
+
+To investigate higher--order relationships, predictors can be added to the table or formula to create more complex visualizations (e.g. panels in the \pkg{lattice} plots, etc).
+
+What does the distribution look like per response class for the missing data?  If we look at the frequency of {\em any} missing predictor value per class, the results show that some classes are more problematic than others:
+
+<<ch03_Soy_miss1>>=
+table(Soybean$Class, complete.cases(Soybean))
+hasMissing <- unlist(lapply(Soybean, function(x) any(is.na(x))))
+hasMissing <- names(hasMissing)[hasMissing]
+head(hasMissing)
+@
+
+There are several classes where all of the samples have at least one missing predictor value. Are these concentrated in a single predictor that we could remove?  We can get the percentage of missing values for each predictor by class using the following syntax: 
+
+<<ch03_Soy_miss2,size="scriptsize">>=
+byPredByClass <- apply(Soybean[, hasMissing], 2, 
+                       function(x, y) {
+                         tab <- table(is.na(x), y)
+                         tab[2,]/apply(tab, 2, sum)
+                       },
+                       y = Soybean$Class)
+
+## The columns are predictors and the rows are classes. Let's eliminate 
+## any rows and columns with no missing values
+
+byPredByClass <- byPredByClass[apply(byPredByClass, 1, sum) > 0,]
+byPredByClass <- byPredByClass[, apply(byPredByClass, 2, sum) > 0]
+
+## now print:
+t(byPredByClass)
+@
+
+From this output, we see that there are many predictors completely missing for the  \texttt{2-4-d-injury}, \texttt{cyst-nematode} and \texttt{herbicide-injury} classes. The \texttt{phytophthora-rot} class has a high rate of missing data across many predictors and the \texttt{diaporthe-pod-$\&$-stem-blight} has a more moderate pattern of missing data.
+
+One approach to handling missing data is to use an imputation technique.  However, it is unlikely that imputation will help since almost 100$\%$ of the predictor values will need to be imputed in a few cases. We could encode the missing as another level or eliminate the classes associated with the high rate of missing values from the data altogether. 
+
+
+How would the frequencies of the predictor values affect the modeling process? If we are using a model that is sensitive to sparsity then the low rate of some of the factor levels might be an issue. We can convert the factors to a set of dummy variables and see how good or bad the sparsity is.
+
+<<ch03_Soy_dummy>>=
+## Some of the factors are ordinal. First convert them to unordered factors so
+## that we get a set of binary indicators.
+
+orderedVars <- unlist(lapply(Soybean, is.ordered))
+orderedVars <- names(orderedVars)[orderedVars]
+
+## Let's bypass the problem of missing data by removing the offending classes
+
+completeClasses <- as.character(unique(Soybean$Class[complete.cases(Soybean)]))
+Soybean3 <- subset(Soybean, Class %in% completeClasses)
+for(i in orderedVars) Soybean3[, i] <- factor(as.character(Soybean3[, i]))
+
+## Use dummyVars to generate the binary predictors...
+dummyInfo <- dummyVars(Class ~ ., data = Soybean3)
+dummies <- predict(dummyInfo, Soybean3)
+
+## ... then nearZeroVar to figure out which should be removed.
+predDistInfo <- nearZeroVar(dummies, saveMetrics = TRUE)
+head(predDistInfo)
+## The number and percentage of predictors to remove:
+sum(predDistInfo$nzv)
+mean(predDistInfo$nzv)
+@
+
+So if we wanted to remove sparse and unbalanced predictors, \Sexpr{round(mean(predDistInfo$nzv)*100,1)}$\%$ of the dummy variables would be eliminated. One way around this is to use models that are not sensitive to this characteristic, such as tree-- or rule--based models, or na\"{\i}ve Bayes.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\clearpage
+
+<<ch03_PreProcessBBB, results='hide', echo = FALSE>>=
+data(BloodBrain)
+@
+
+\section*{Exercise 3}
+\label{P:PreProcessQSARProb}
+Chapter 5 introduces Quantitative Structure--Activity Relationship (QSAR) modeling where the characteristics of a chemical compound are used to predict other chemical properties. The \pkg{caret} package contains such a data set from \cite{Mente:2005vb}. Here,  where the ability of a chemical to permeate the blood--brain barrier was experimentally determined for \Sexpr{length(logBBB)} compounds. \Sexpr{ncol(bbbDescr)} predictors were measured for each compound.
+\begin{itemize}
+  \item[](a) Start \pkg{R} and use these commands to load the data:
+  
+<<ch03_bbb_load,eval=FALSE>>=
+library(caret)
+data(BloodBrain)
+# use ?BloodBrain to see more details
+@
+
+   \item[] The numeric outcome is contained in the vector \texttt{logBBB} while the predictors are in the data frame \texttt{bbbDescr}.
+   \item[](b) Do any of the individual predictors have degenerate distributions?
+  \item[](c) Generally speaking, are there strong relationships between the predictor data? If so, how could correlations in the predictor set be reduced? Does this have a dramatic effect on the number of predictors available for modeling?
+\end{itemize}
+
+
+\subsection*{Solutions}
+
+For these data, the first assessment looks for sparse and unbalanced predictors. The \pkg{caret} \knfun{nearZeroVar} function is used again but this time with the \knarg{saveMetrics} options that retains information about each predictor:
+
+<<ch03_bbb_nzv>>=
+ncol(bbbDescr)
+predictorInfo <- nearZeroVar(bbbDescr, saveMetrics = TRUE)
+head(predictorInfo)
+## Are there any near-zero variance predictors?
+rownames(predictorInfo)[predictorInfo$nzv]
+## Examples:
+table(bbbDescr$a_acid)
+table(bbbDescr$alert)
+## Let's get rid of these:
+filter1 <- bbbDescr[, !predictorInfo$nzv]
+ncol(filter1)
+@
+
+As mentioned in the text, there are some models that are resistant to near--zero variance predictors and, for these models, we would most likely leave them in. 
+
+What about the distributions of the remaining predictors? Although, it is time consuming to look at individual density plots of \Sexpr{ncol(filter1)} predictors, we do recommend it (or at least looking at a sample of predictors).  For example, the top panel of Figure \ref{F:bbb_dens_trans} shows a random sample of eight predictors:
+
+<<ch03_bbb_sampled>>=
+set.seed(532)
+sampled1 <- filter1[, sample(1:ncol(filter1), 8)]
+names(sampled1)
+@
+
+A few of these predictors exhibit skewness and one (\texttt{frac.cation7.}) shows two distinct modes. Based on the rug plot of points in the panel for \texttt{o$\_$sp2}, these data are also likely to be bimodal. 
+
+To numerically assess skewness, the function from the \pkg{e1071} package is used again:
+
+<<ch03_bbbSkew>>=
+library(e1071)
+skew <- apply(filter1, 2, skewness)
+summary(skew)
+@
+
+
+There are a number of predictors that are left-- or right--skewed. We can again apply the Yeo--Johnson transformation to the data (some of the predictors are negative):
+
+<<ch03_bbb_yj>>=
+yjBBB <- preProcess(filter1, method = "YeoJohnson")
+transformed <- predict(yjBBB, newdata = filter1)
+sampled2 <- transformed[, names(sampled1)]
+@
+
+\setkeys{Gin}{width=.8\textwidth}
+\begin{figure}
+  \begin{center}  
+<<ch03_bbb_dens, echo = FALSE,out.width='.8\\linewidth',fig.width=10,fig.height=6>>=
+bookTheme()
+set.seed(532)
+sampled1 <- filter1[, sample(1:ncol(filter1), 8)]
+densityplot(~value|variable, 
+            data = melt(sampled1), 
+            scales = list(x = list(relation = "free"), 
+                          y = list(relation = "free")), 
+            adjust = 1.25, 
+            pch = "|",
+            main = "Original",
+            xlab = "Predictor")
+
+@
+
+\vspace{.1in}
+
+<<ch03_bbb_dens_trans, echo = FALSE,out.width='.8\\linewidth',fig.width=10,fig.height=6>>=
+bookTheme()
+densityplot(~value|variable, 
+            data = melt(sampled2), 
+            scales = list(x = list(relation = "free"), 
+                          y = list(relation = "free")), 
+            adjust = 1.25, 
+            pch = "|",
+            main = "Transformed",
+            xlab = "Predictor")
+
+@
+    \caption{Density plots of the blood--brain barrier predictors before and after a Yeo--Johnson transformation. }
+    \label{F:bbb_dens_trans}
+  \end{center}
+\end{figure}
+
+The results for the sampled predictors are shown in the bottom panel of Figure  \ref{F:bbb_dens_trans}. Although the distributions for \texttt{fpsa3} and \texttt{wpsa2} are more symmetric, the other predictors have either additional modes or more pronounced modes. One option would be to manually assess which predictors would benefit from this type of transformation. 
+
+Is there severe correlation between the predictors? Based on previous experience with these types of data, there are likely to be many relationships between predictors. For example, when we examine the predictor names we find that \Sexpr{sum(grepl("(psa)|(fsa)|(nsa)", names(filter1)))} are some type of surface area predictor. These are most likely correlated to some extent.  Also, surface area is usually related to the size (or weight) of a molecule, so additional correlations may exist. 
+
+The correlation matrix of the predictors can be computed and examined. However, we know that many predictors are skewed in these data. Since the correlation is a function of squared values of the predictors, the samples in the tails of the predictor distributions may have a significant effect on the correlation structure. For this reason, we will look at the correlation structure three ways: the untransformed data, the data after the Yeo--Johnson transformation, and the data after a spatial sign transformation. 
+
+<<ch03_bbb_corr>>=
+rawCorr <- cor(filter1)
+transCorr <- cor(transformed)
+
+ssData <- spatialSign(scale(filter1))
+ssCorr <- cor(ssData)
+@
+
+<<ch03_bbb_corr_mat, eval = FALSE>>=
+library(corrplot)
+## plot the matrix with no labels or grid
+corrplot(rawCorr, order = "hclust", addgrid.col = NA, tl.pos = "n")
+corrplot(transCorr, order = "hclust", addgrid.col = NA, tl.pos = "n")
+ssData <- spatialSign(scale(filter1))
+ssCorr <- cor(ssData)
+corrplot(ssCorr, order = "hclust", addgrid.col = NA, tl.pos = "n")
+@
+
+\begin{figure}
+  \begin{center}  
+<<ch03_bbb_cor_raw, echo = FALSE,out.width='.3\\linewidth',fig.width=7,fig.height=7>>=
+corrplot(rawCorr, order = "hclust", addgrid.col = rgb(.2, .2, .2, 0), tl.pos = "n")
+@
+\vspace{.1in}
+
+<<ch03_bbb_cor_yj, echo = FALSE,out.width='.3\\linewidth',fig.width=7,fig.height=7>>=
+corrplot(transCorr, order = "hclust", addgrid.col = rgb(.2, .2, .2, 0), tl.pos = "n")
+@
+\vspace{.1in}
+
+<<ch03_bbb_cor_ss, echo = FALSE,out.width='.3\\linewidth',fig.width=7,fig.height=7>>=
+corrplot(ssCorr, order = "hclust", addgrid.col = rgb(.2, .2, .2, 0), tl.pos = "n")
+@
+    \caption{Correlation matrices for the raw data (top), transformed via the Yeo--Johnson transformation (middle) and the spatial sign transformation (bottom). }
+    \label{F:bbb_corr_mat}
+  \end{center}
+\end{figure}
+
+
+The results are in Figure \ref{F:bbb_corr_mat}.  This visualization indicates that correlations lessen with increasing  levels of transformations:
+
+<<ch03_bbbCorrSummary>>=
+corrInfo <- function(x) summary(x[upper.tri(x)])
+corrInfo(rawCorr)
+corrInfo(transCorr)
+corrInfo(ssCorr)
+@
+
+Rather than transform the data to resolve between--predictor correlations, it may be a better idea to remove predictors. The \pkg{caret} function \knfun{findCorrelation} was described in the text. The user is required to state what level of pair--wise correlations that they are willing to accept. The code below shows (for these data) the trade--off between the correlation threshold, the number of retained predictors, and the average absolute correlation in the data. Figure \ref{F:threshPlot} shows the results. 
+
+
+<<ch03_corrFilter>>=
+thresholds <- seq(.25, .95, by = 0.05)
+size <- meanCorr <- rep(NA, length(thresholds))
+removals <- vector(mode = "list", length = length(thresholds))
+
+for(i in seq_along(thresholds)){
+  removals[[i]] <- findCorrelation(rawCorr, thresholds[i])
+  subMat <- rawCorr[-removals[[i]], -removals[[i]]]
+  size[i] <- ncol(rawCorr) -length(removals[[i]])
+  meanCorr[i] <- mean(abs(subMat[upper.tri(subMat)]))
+}
+
+corrData <- data.frame(value = c(size, meanCorr),
+                       threshold = c(thresholds, thresholds),
+                       what = rep(c("Predictors", 
+                                    "Average Absolute Correlation"),
+                                  each = length(thresholds)))
+@
+
+\setkeys{Gin}{width=.8\textwidth}
+\begin{figure}
+  \begin{center}  
+<<ch03_thresh_plot, echo = FALSE,out.width='.7\\linewidth',fig.width=8,fig.height=5>>=
+bookTheme()
+xyplot(value~ threshold|what, data = corrData, 
+       scales = list(y = list(relation = "free")),
+       type = c("p", "g", "smooth"),
+       degree = 2,
+       ylab = "")
+@
+    \caption{The average absolute correlation and the subset size for each value of the correlation filter threshold.  }
+    \label{F:threshPlot}
+  \end{center}
+\end{figure}
+
+We can also try the \pkg{subselect} package \cite{Cerdeira2014} to remove predictors. This package uses a different criterion to evaluate the quality of a subset and has less greedy methods to search the predictor space. First, we have to remove all linear dependencies from the data. That includes perfect pair--wise correlations as well as relationships between three or more predictors. The \knfun{trim.matrix} function does that: 
+
+<<ch03_subselect0>>=
+library(subselect)
+ncol(rawCorr)
+trimmed <- trim.matrix(rawCorr, tolval=1000*.Machine$double.eps)$trimmedmat
+ncol(trimmed)
+@
+
+We can use simulated annealing and genetic algorithms to search for quality subsets. These techniques allow for lower and upper limits for the number of predictors. However, the functions get dramatically slower as the range increases. Here, we will look at one solution found by \knfun{findCorrelation} and, will subsequently use \pkg{subselect} to  search within that subset size:
+
+<<ch03_subselect>>=
+set.seed(702)
+sa <- anneal(trimmed, kmin = 18, kmax = 18, niter = 1000)
+saMat <- rawCorr[sa$bestsets[1,], sa$bestsets[1,]]
+
+set.seed(702)
+ga <- genetic(trimmed, kmin = 18, kmax = 18, nger = 1000)
+gaMat <- rawCorr[ga$bestsets[1,], ga$bestsets[1,]]
+
+fcMat <- rawCorr[-removals[size == 18][[1]], 
+                 -removals[size == 18][[1]]]
+
+corrInfo(fcMat)
+corrInfo(saMat)
+corrInfo(gaMat)
+@
+
+The main difference between these results is that the greedy approach of \knfun{findCorrelation} is much more conservative than the techniques found in the \pkg{subselect} package. 
+
+\section*{Session Info}
+
+<<ch03_session, echo = FALSE, results='asis'>>=
+toLatex(sessionInfo())
+@
+
+
+\bibliographystyle{ECA_jasa}
+\bibliography{Ch_03_Ex_Sol}
+
+
+\end{document}
+
+
+
+ 

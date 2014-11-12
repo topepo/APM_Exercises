@@ -1,0 +1,493 @@
+
+\documentclass[12pt]{article}
+
+\usepackage{amsmath}
+\usepackage{graphicx}
+\usepackage{color}
+\usepackage{xspace}
+\usepackage{fancyvrb}
+\usepackage{booktabs}
+\usepackage[
+         colorlinks=true,
+         linkcolor=blue,
+         citecolor=blue,
+         urlcolor=blue]
+         {hyperref}
+         
+\usepackage[default]{jasa_harvard}   
+%\usepackage{JASA_manu}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\setlength{\oddsidemargin}{-.25 truein}
+\setlength{\evensidemargin}{0truein}
+\setlength{\topmargin}{-0.2truein}
+\setlength{\textwidth}{7 truein}
+\setlength{\textheight}{8.5 truein}
+\setlength{\parindent}{0truein}
+\setlength{\parskip}{0.07truein}
+
+\definecolor{darkred}{rgb}{0.6,0.0,0}
+\definecolor{darkblue}{rgb}{.165, 0, .659}
+\definecolor{grey}{rgb}{0.85,0.85,0.85}
+\definecolor{darkorange}{rgb}{1,0.54,0}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+\newcommand{\bld}[1]{\mbox{\boldmath $#1$}}
+\newcommand{\shell}[1]{\mbox{$#1$}}
+\renewcommand{\vec}[1]{\mbox{\bf {#1}}}
+
+\newcommand{\ReallySmallSpacing}{\renewcommand{\baselinestretch}{.6}\Large\normalsize}
+\newcommand{\SmallSpacing}{\renewcommand{\baselinestretch}{1.1}\Large\normalsize}
+
+\newcommand{\halfs}{\frac{1}{2}}
+
+\DefineVerbatimEnvironment{Sinput}{Verbatim}{fontshape=sl,formatcom=\color{darkblue}}
+\fvset{fontsize=\footnotesize}
+
+\newcommand{\website}[1]{{\textsf{#1}}}
+\newcommand{\code}[1]{\mbox{\footnotesize\color{darkblue}\texttt{#1}}}
+\newcommand{\pkg}[1]{{\fontseries{b}\selectfont #1}}
+\renewcommand{\pkg}[1]{{\textsf{#1}}}
+\newcommand{\todo}[1]{TODO: {\bf \textcolor{darkred}{#1}}}
+\newcommand{\Dag}{$^\dagger$}
+\newcommand{\Ast}{$^\ast$}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\begin{document}
+<<startup,echo=FALSE>>=
+opts_chunk$set(tidy=FALSE,message=FALSE,size='footnotesize',
+               background = 'white',comment=NA, digits = 3,
+               prompt = TRUE)
+knit_theme$set("bclear")
+@
+
+\title{ Exercises for  \\ {\it Applied Predictive Modeling} \\ Chapter 4 --- Over--Fitting and Model Tuning}
+\author{Max Kuhn, Kjell Johnson}
+\date{Version 1\\ \today}
+
+<<ch04_startup, echo = FALSE, results='hide'>>=
+library(caret)
+library(AppliedPredictiveModeling)
+library(ggplot2)
+library(reshape2)
+library(Hmisc)
+
+options(width = 105)
+textList <- function (x, period = FALSE, last = " and ")
+{
+    if (!is.character(x))
+        x <- as.character(x)
+    numElements <- length(x)
+    out <- if (length(x) > 0) {
+        switch(min(numElements, 3), x, paste(x, collapse = last),
+            {
+                x <- paste(x, c(rep(",", numElements - 2), last,
+                  ""), sep = "")
+                paste(x, collapse = " ")
+            })
+    }
+    else ""
+    if (period)
+        out <- paste(out, ".", sep = "")
+    out
+}
+
+hook_inline = knit_hooks$get('inline')
+knit_hooks$set(inline = function(x) {
+  if (is.character(x)) highr::hi_latex(x) else hook_inline(x)
+})
+
+options(width = 80)
+@
+
+\newcommand{\apmfun}[1]{{\tt \small \hlkwd{#1}}}
+\newcommand{\apmarg}[1]{{\tt \small \hlkwc{#1}}}
+\newcommand{\apmstr}[1]{{\tt \small \hlstr{#1}}}
+\newcommand{\apmnum}[1]{{\tt \small \hlnum{#1}}}
+\newcommand{\apmstd}[1]{{\tt \small \hlstd{#1}}}
+\newcommand{\apmred}[1]{\textcolor[rgb]{0.8,0.0,0}{#1}}%
+
+\maketitle
+
+\thispagestyle{empty}
+      
+The solutions in this file uses several \pkg{R} packages not used in the text. To install all of the packages needed for this document, use:
+
+<<ch04_install, eval = FALSE>>=
+install.packages(c("AppliedPredictiveModeling", "car", "caret", "corrplot", "ggplot2",
+                   "e1071", "Hmisc", "mlbench", "reshape2", "subselect", "vcd"))
+@
+      
+\section*{Exercise 1}
+Consider the Music Genre data set described in Sect. 1.4.  The objective for these data is to use the predictors to classify music samples into the appropriate music genre.
+\begin{itemize}
+  \item[] (a) What data splitting method(s) would you use for these data?  Explain.
+  \item[] (b) Using tools described in this chapter, provide code for implementing your approach(es).
+\end{itemize}
+
+\subsection*{Solutions}
+
+
+\begin{figure}[h]
+  \begin{center}  
+<<MusicGenreDistribution, echo = FALSE, fig.width = 5.5, fig.height = 3.5,out.width=".7\\textwidth">>=
+transparentTheme(pchSize = 1, trans = .7)
+music = read.csv("genresTrain.csv")
+counts = table(music$GENRE)
+
+barchart(Freq ~ Var1,
+         data = as.data.frame(counts),
+         ylim = c(0, max(counts)*1.1),
+         ylab = "Frequency",
+         xlab = "Genre")
+@
+    \caption[Music Genre Distribution]{The frequency distribution of genres in the music data.}
+    \label{F:MusicGenreDistribution}
+  \end{center}
+\end{figure}
+
+The frequency distribution of music genres is presented in Figure \ref{F:MusicGenreDistribution}.  When determining the data splitting method, we should focus on two primary characteristics:  
+\begin{itemize}
+  \item the number of samples relative to the number of predictors in the data, and 
+  \item the distribution of samples across classes.
+\end{itemize}
+
+For these data, the number of samples is \Sexpr{nrow(music)} and the number of predictors is \Sexpr{ncol(music)-1}.  Because the number of samples is more than \Sexpr{floor(nrow(music)/ncol(music))} fold greater than the number of predictors, we likely can split the data into a training set and test set.  This split would enable us to independently verify model performance results without impacting the estimation of the optimal tuning parameter(s) selection.  However, prior to making this choice, we must examine the class distribution of the response.
+
+Figure \ref{F:MusicGenreDistribution} clearly displays the imbalance across the classes of music genre with Metal having the lowest percentage of samples ($7\%$) and Classical having the highest percentage of samples ($28\%$).  While there is a distinct imbalance, the number of samples in the overall data set is large enough such that resampling or cross-validation techniques have a good chance at randomly selecting samples across all classes in similar proportion to the entire data set.
+
+When selecting a resampling technique on a large data set, one must consider the computational requirements of each technique and model.  $k$-fold cross-validation, with small $k$ (5-10) will be less computationally taxing in this scenario than repeated training/test splits  or bootstrapping.  However, repeated training/test splits or bootstrapping will likely provide more accurate estimates of tuning parameters and model performance.
+
+The \apmfun{createDataPartition} function in the \pkg{caret} package can be used to partition the data into $k$-folds such that each fold approximately preserves the class distribution from the entire data set.  The following code could be used to create 10 folds:
+
+<<lgocvCode,eval=FALSE>>=
+set.seed(31)
+tenFoldCV <- createDataPartition(trainClasses, k = 10, returnTrain = TRUE)
+@
+
+\clearpage
+
+\section*{Exercise 2}
+
+Consider the permeability data set described in Section Sect. 1.4.  The objective for this data is to use the predictors to model compounds' permeability.
+\begin{itemize}
+  \item[] (a) What data splitting method(s) would you use for this data?  Explain.
+  \item[] (b) Using tools described in this chapter, provide code for implementing your approach(es).
+\end{itemize}
+
+\begin{figure}[h]
+  \begin{center}  
+<<PermeabilityDistribution, echo = FALSE, fig.width = 6, fig.height = 4.5,out.width=".7\\textwidth">>=
+library(AppliedPredictiveModeling)
+data(permeability)
+
+transparentTheme(pchSize = 1, trans = .7)
+histogram(~permeability, xlab = "Permeability")
+@
+
+    \caption[Permeability Distribution]{Distribution of permeability values.}
+    \label{F:PermeabilityDistribution}
+  \end{center}
+\end{figure}
+ 
+\subsection*{Solutions}
+
+The frequency distribution of music genres is presented in Figure \ref{F:PermeabilityDistribution}.  In this case, the number of samples is \Sexpr{nrow(fingerprints)} and the number of predictors is \Sexpr{ncol(fingerprints)}.  Because the number of samples is small and is much smaller than the number of predictors, splitting the data into a separate training and testing set may hinder our ability to find signal among the predictors and the response.  For the permeability data, we should focus on using resampling performance measures to select optimal tuning parameters and predictive performance.
+
+Another characteristic we should consider when determining the resampling approach is the distribution of the response.  Clearly, the distribution of permeability values is skewed, with the majority of samples having low values.  Because the overall number of samples is small, randomly partitioning the samples may create sets that are not representative of the overall data set.  That is, we are likely to have many partitions of the data that contain relatively few of the larger permeability samples.  To create more representative, but still random, selections we should use stratification.
+
+The \apmfun{createDataPartition} function in the \pkg{caret} package performs stratified sampling based on the quantiles of the data.  Repeated cross-validation would be an appropriate resampling technique for this data.  The following code could be used to create 25 iterations of 10-fold cross-validation:
+
+<<repeatedCVCode>>=
+set.seed(72)
+repeatedCV <- createMultiFolds(permeability, k = 10, times = 25)
+@
+
+\code{repeatedCV} is a list that contains vectors of integers for each fold. These integers are the row numbers of the samples that should be used to model the data within the fold. 
+
+Figure \ref{F:ResampledPermeabilityDistribution} illustrates the distribution of response for 6 of the randomly selected partitions of the data.  Notice that the distributions are representative of the overall distribution of the data in Figure  \ref{F:PermeabilityDistribution}.
+
+\begin{figure}[t]
+  \begin{center}  
+<<ResampledPermeabilityDistribution, echo = FALSE, fig.width = 8, fig.height = 6,out.width=".85\\textwidth">>=
+set.seed(72)
+repeatedCV <- createMultiFolds(permeability, k = 10, times = 25)
+dataByFold <- lapply(repeatedCV[1:6], 
+                     function(ind, dat) dat[ind,],
+                     dat = permeability)
+library(reshape2)
+dataByFold <- melt(dataByFold)
+
+transparentTheme(pchSize = 1, trans = .7)
+histogram(~value|L1, data = dataByFold, layout=c(3,2), xlab = "Permeability")
+@
+    \caption[Resampled Permeability Distribution]{Distribution of permeability values within six of the folds.}
+    \label{F:ResampledPermeabilityDistribution}
+  \end{center}
+\end{figure}
+
+\clearpage
+
+\section*{Exercise 3}
+
+Partial least squares (Sect. 6.3) was used to model the yield of a chemical manufacturing process (Sect. 1.4).  The data can be found in the \pkg{AppliedPredictiveModeling} package and can be loaded using:
+
+<<ch04_OverfittingChemicalManModsLoad>>=
+library(AppliedPredictiveModeling)
+data(ChemicalManufacturingProcess)
+@
+
+The objective of this analysis is to find the number of PLS components that yields the optimal $R^2$ value (Sect. 5.1).  PLS models with 1 through 10 components were each evaluated using 5 repeats of 10-fold cross--validation and the results are presented in the following table.
+  
+<<ch04_OverfittingChemicalManMods, echo = FALSE, results='hide', cache = TRUE,warning=FALSE>>=
+set.seed(19711230)
+plsProfileChemMod <- train(Yield ~ .,
+                           data = ChemicalManufacturingProcess,
+                           method = "pls",
+                           preProc = c("center", "scale"),
+                           tuneLength = 10,
+                           trControl = trainControl(method = "repeatedcv", repeats = 5))
+@
+
+\begin{itemize}
+  \item[] (a) Using the ``one--standard error'' method, what number of PLS components provides the most parsimonious model?
+  \item[] (b) Compute the tolerance values for this example.  If a 10$\%$ loss in $R^2$ is acceptable, then what is the optimal number of PLS components?
+  \item[] (c) Several other models (discussed in Part II) with varying degrees of complexity were trained and tuned and the results are presented in Figure \ref{F:OverfittingChemicalManPlot}.  If the goal is to select the model that optimizes $R^2$, then which model(s) would you choose, and why?
+  \item[] (d) Prediction time, as well as model complexity (Sect. 4.8) are other factors to consider when selecting the optimal model(s).  Given each model's prediction time, model complexity, and $R^2$ estimates, which model(s) would you choose, and why?
+\end{itemize}
+
+
+\subsection*{Solutions}
+
+The model was fit using:
+
+<<ch04_OverfittingChemicalManModsPrint, eval=FALSE>>=
+set.seed(19711230)
+plsProfileChemMod <- train(Yield ~ .,
+                           data = ChemicalManufacturingProcess,
+                           method = "pls",
+                           preProc = c("center", "scale"),
+                           tuneLength = 10,
+                           trControl = trainControl(method = "repeatedcv", repeats = 5))
+@
+
+<<ch04_OverfittingChemicalManTable, results='asis',echo=FALSE>>=
+pls_table <- plsProfileChemMod$results[, c("ncomp", "Rsquared", "RsquaredSD")]
+pls_table$RsquaredSEM <- pls_table$RsquaredSD/sqrt(length(plsProfileChemMod$control$index))
+pls_table$RsquaredSD <- NULL
+
+latex(pls_table,
+      file = "",
+      booktabs = TRUE,
+      title = "",
+      cgroup = c("", "Resampled $R^2$"),
+      colheads = c("Components", "Mean", "Std. Error"),
+      n.cgroup = c(1, 2),
+      digits = 3,
+      caption = "Number of components in the PLS model and their associated resampled $R^2$ values. ",
+      label = "T:OverfittingChemManTable",
+      rowname = NULL)
+@
+
+We can get the resampling summaries in the \apmstd{results} component of the object and find the number of resamples using the \apmstd{index} argument of the \apmstd{control} component. 
+
+<<ch04_ChemR2>>=
+R2values <- plsProfileChemMod$results[, c("ncomp", "Rsquared", "RsquaredSD")]
+R2values$RsquaredSEM <- R2values$RsquaredSD/sqrt(length(plsProfileChemMod$control$index))
+@
+
+
+Table \ref{T:OverfittingChemManTable} show the results but let's plot them too. The easiest way to do this is using the  package \href{http://docs.ggplot2.org/}{\pkg{ggplot2}}. First, we can make a plot of the $R^2$ values, showing the resampled estimate minus one standard error. 
+<<ch04_ChemR2print, eval=FALSE>>=
+library(ggplot2)
+oneSE <- ggplot(R2values, 
+                ## Create an aesthetic mapping that plots the
+                ## number of PLS components versus the R^2 
+                ## values and their one SE lower bound
+                aes(ncomp, Rsquared,
+                    ymin = Rsquared - RsquaredSEM, 
+                    ## don't add anything here to get 
+                    ## a one-sided interval plot
+                    ymax=Rsquared))
+## geom_linerange shoes the interval and geom_pointrange
+## plots the resampled estimates.
+oneSE + geom_linerange() + geom_pointrange() + theme_bw()
+@
+<<ch04_ChemR2best, results='hide'>>=
+bestR2 <- subset(R2values, ncomp == which.max(R2values$Rsquared))
+bestR2$lb <- bestR2$Rsquared - bestR2$RsquaredSEM
+candR2 <- subset(R2values, Rsquared >=  bestR2$lb & ncomp < bestR2$ncomp)
+@
+Figure \ref{F:ChemR2oneSE} shows the results. The best setting uses \Sexpr{R2values$ncomp[which.max(R2values$Rsquared)]} PLS components with a lower bound of \Sexpr{round(bestR2$lb, 2)}. There is \Sexpr{nrow(candR2)} parameter setting whose resampled $R^2$ estimate is greater than or equal to this bound (and are simpler): a model using   \Sexpr{candR2$ncomp[nrow(candR2)]} PLS components. 
+
+
+\begin{figure}
+  \begin{center}  
+<<ch04_ChemR2oneSE, echo = FALSE,out.width='.8\\linewidth',fig.width=8,fig.height=4.5>>=
+oneSE <- ggplot(R2values, 
+                ## Create an aesthetic mapping that plots the
+                ## number of PLS components versus the R^2 
+                ## values and their one SE lower bound
+                aes(ncomp, Rsquared,
+                    ymin = Rsquared - RsquaredSEM, 
+                    ## don't add anything here to get 
+                    ## a one-sided interval plot
+                    ymax=Rsquared))
+## geom_linerange shoes the interval and geom_pointrange
+## plots the resampled estimates.
+oneSE + geom_linerange() + geom_pointrange() + xlab("#Components") + theme_bw()
+@
+    \caption{Resampled $R^2$ values with a lower bound of one standard error for the chemical manufacturing data. }
+    \label{F:ChemR2oneSE}
+  \end{center}
+\end{figure}
+
+
+The following syntax can be used to get the tolerance values:
+<<<ch04_bestR2>>=
+bestR2 <- subset(R2values, ncomp == which.max(R2values$Rsquared))
+R2values$tolerance <- (R2values$Rsquared - bestR2$Rsquared)/bestR2$Rsquared * 100
+@
+
+Let's stick with \pkg{ggplot2} graphics and plot these in Figure \ref{F:ChemR2tol} using {\tt \Sexpr{'qplot(ncomp, tolerance, data = R2values)'}}. The lowest setting that does not exceed a 10$\%$ tolerance is a 2 component model. 
+
+\begin{figure}
+  \begin{center}  
+<<ch04_ChemR2tol, echo = FALSE,out.width='.8\\linewidth',fig.width=8,fig.height=4.5>>=
+qplot(ncomp, tolerance, data = R2values) + xlab("#Components") + theme_bw()
+@
+    \caption{$R^2$ tolerance values for the chemical manufacturing data. }
+    \label{F:ChemR2tol}
+  \end{center}
+\end{figure}
+
+
+\setkeys{Gin}{width=.65\textwidth}
+\begin{figure}
+  \begin{center}
+    \includegraphics{figure/ChemicalManPlot}
+    \caption[Contrasting Performance with Time]{A plot of the estimated model performance against the time to predict 500,000 new samples using the chemical manufacturing data.}
+    \label{F:OverfittingChemicalManPlot}
+  \end{center}
+\end{figure}
+
+Looking at Figure \ref{F:OverfittingChemicalManPlot}, the model with the best $R^2$ value is random forest. However, the support vector machine has nearly equivalent results and the confidence intervals for the $R^2$ values have some overlap. The next best model is boosted linear regression, although this model is probably significantly worse that the support vector machine. Based on $R^2$ alone, the random forest or SVM models would be best. However, when execution time is factored in, the SVM model clearly wins since it is far faster. This is, of course, subjective since it is highly dependent on the implementation. If the prediction function needed to be recoded for use, neither of these models would be preferred. In that case, the regression tree or PLS model would be better choices, albeit with a substantial drop in $R^2$.  
+
+\clearpage
+
+
+
+\section*{Exercise 4}
+
+<<ch04_OverfittingExercisesOilLoad, results='hide', echo = FALSE>>=
+library(caret)
+data(oil)
+@
+
+\citeasnoun{BrodnjakVonina:2005p4943} develop a methodology for  food laboratories to determine the type of oil from a sample.  In their procedure, they used a gas chromatograph (an instrument that separate chemicals in a sample) to measure \Sexpr{ncol(fattyAcids)} different fatty acids in an oil. These measurements would then be used to predict the type of oil in a food samples. To create their model, they used \Sexpr{length(oilType)} samples\footnote{The authors state that there are 95 samples of known oils. However, we count 96 in their Table 1 (pgs. 33-35 of the article)} of \Sexpr{length(table(oilType))} types of oils.
+
+These data can be found in the \pkg{caret} package using {\tt \Sexpr{'data(oil)'}}. The oil types are contained in a factor variable called \apmstd{oilType}. The types are: pumpkin (coded as \apmstd{A}), sunflower (\apmstd{B}), peanut (\apmstd{C}), olive (\apmstd{D}), soybean (\apmstd{E}), rapeseed (\apmstd{F}) and corn (\apmstd{G}). In \pkg{R}:
+
+<<ch04_OverfittingExercisesOil>>=
+library(caret)
+data(oil)
+str(oilType)
+table(oilType)
+@
+
+\begin{itemize}
+  \item[] (a) Use the \apmfun{sample} function in base \pkg{R} to create a completely random sample of 60 oils. How closely do the frequencies of the random sample match the original samples? Repeat this procedure several times of understand the variation in the sampling process.
+  \item[] (b) Use the \pkg{caret} package function \apmfun{createDataPartition} to create a stratified random sample. How does this compare to the completely random samples.
+  \item[](c) With such a small samples size, what are the options for determining performance of the model? Should a test set be used?
+  \item[] (d) One method for understanding the uncertainty of a test set is to use a confidence interval. To obtain a confidence interval for the overall accuracy, the based \pkg{R} function \apmfun{binom.test} can be used. It requires the user to input the number of samples and the number correctly classified to calculate the interval. For example, suppose a test set sample of 20 oil samples was set aside and 76 were used for model training. For this test set size and a model that is about 80$\%$ accurate (16 out of 20 correct), the confidence interval would be computed using
+  
+<<ch04_OverfittingExercisesCI>>=
+binom.test(16, 20)
+@
+
+  \item[] In this case, the width of the 95$\%$ confidence interval is \Sexpr{round(diff(binom.test(16, 20)$conf.int)*100, 1)}$\%$. Try different samples sizes and accuracy rates to understand the trade--off between the uncertainty in the results, the model performance and the test set size.
+\end{itemize}
+
+\subsection*{Solutions}
+
+We can create 20 splits using the \apmfun{sample} function:
+
+<<ch04_oil_split_freq>>=
+sampNum <- floor(length(oilType)*.6) + 1
+set.seed(629)
+oilSplits <- vector(mode = "list", length = 20)
+for(i in seq(along = oilSplits)) oilSplits[[i]] <- table(sample(oilType, size = sampNum))
+head(oilSplits, 3)
+## Combine the list of tables into a matrix
+oilSplits <- do.call("rbind", oilSplits)
+head(oilSplits, 3)
+## What does the distirbution of class percentages look like?
+summary(oilSplits/sampNum)
+@
+
+Using a stratified random sample using \apmfun{createDataPartition}:
+
+<<ch04_oil_split_freq_strat>>=
+set.seed(629)
+oilSplits2 <- createDataPartition(oilType, p = .60, times = 20)
+oilSplits2 <- lapply(oilSplits2, function(x, y) table(y[x]), y = oilType)
+head(oilSplits2, 3)
+oilSplits2 <- do.call("rbind", oilSplits2)
+summary(oilSplits2/sampNum)
+@
+
+The sampling done using \apmfun{createDataPartition} has much less variability that using the \apmfun{sample} function, and each partition has at least one sample in each class. 
+
+Choosing a data splitting strategy is difficult. One possibility would be leave--one--out cross--validation only because, with the exception of class \apmstd{G}, each class will be represented in each resample. It should be noted that some classification models require at least one sample from each class, so resampling these data may place a restriction one which models can be used. As for a test set, it may be reasonable to rely on leave--one--out cross--validation as the only method for assessing performance. Alternatively, a test set could be used if it only consisted of the classes with the most samples (e.g. \apmstd{A}, \apmstd{B} and maybe \apmstd{E} and \apmstd{F}) although this would only protect against gross overfitting. 
+
+Looking at the confidence intervals for overall accuracy, let's examine samples sizes between 10 and 30 and accuracy rates of 70$\%$ to 95$\%$:
+
+<<ch04_conf_int>>=
+getWidth <- function(values) {
+  binom.test(x = floor(values["size"]*values["accuracy"])+1, 
+             n = values["size"])$conf.int
+}
+
+ciInfo <- expand.grid(size = 10:30, accuracy = seq(.7, .95, by = 0.01))
+ciWidths <- t(apply(ciInfo, 1, getWidth))
+head(ciWidths)
+ciInfo$length <- ciWidths[,2] - ciWidths[,1]
+# levelplot(length ~ size * accuracy, data = ciInfo)
+@
+
+
+\begin{figure}
+  \begin{center}  
+<<ch04_width_plot, echo = FALSE, fig.width=10, fig.height=6,out.width=".75\\textwidth">>=
+bookTheme()
+levelplot(length ~ size * accuracy, data = ciInfo)
+@
+    \caption{The width of a binomial confidence interval for overall accuracy for different sample sizes and accuracy rates.}
+    \label{F:width_plot}
+  \end{center}
+\end{figure}
+
+
+\section*{Session Info}
+
+<<ch04_session, echo = FALSE, results='asis'>>=
+toLatex(sessionInfo())
+@
+
+
+
+
+\bibliographystyle{ECA_jasa}
+\bibliography{Ch_04_Ex_Sol}
+
+
+\end{document}
+
+
+
+ 
