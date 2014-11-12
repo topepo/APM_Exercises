@@ -5,5 +5,5 @@ This project contains the solutions and code for the end of chapter exercises. I
 
 Right now, the first two sets are finished and we are almost ready to post the solutions for the regression chapters.
 
-**Note**! You may have better solutions that we have here and we would love to see them. You can do so by creating a pull request or, if you are not git-savvy, drop an email to Max (<max.kuhn@pfizer.com>) and/or Kjell (<kjell@arboranalytics.com>).
+**Note**! You may have better solutions than we have here and we would love to see them. You can do so by creating a [pull request](https://help.github.com/articles/using-pull-requests/) or, if you are not git-savvy, drop an email to Max (<max.kuhn@pfizer.com>) and/or Kjell (<kjell@arboranalytics.com>).
 
