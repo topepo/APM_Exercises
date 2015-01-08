@@ -1,0 +1,1176 @@
+
+\documentclass[12pt]{article}
+
+\usepackage{amsmath}
+\usepackage{graphicx}
+\usepackage{color}
+\usepackage{xspace}
+\usepackage{fancyvrb}
+\usepackage{rotating}
+\usepackage[
+         colorlinks=true,
+         linkcolor=blue,
+         citecolor=blue,
+         urlcolor=blue]
+         {hyperref}
+         
+\usepackage[default]{jasa_harvard}   
+%\usepackage{JASA_manu}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\setlength{\oddsidemargin}{-.25 truein}
+\setlength{\evensidemargin}{0truein}
+\setlength{\topmargin}{-0.2truein}
+\setlength{\textwidth}{7 truein}
+\setlength{\textheight}{8.5 truein}
+\setlength{\parindent}{0truein}
+\setlength{\parskip}{0.07truein}
+
+\definecolor{darkred}{rgb}{0.6,0.0,0}
+\definecolor{darkblue}{rgb}{.165, 0, .659}
+\definecolor{grey}{rgb}{0.85,0.85,0.85}
+\definecolor{darkorange}{rgb}{1,0.54,0}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+\newcommand{\bld}[1]{\mbox{\boldmath $#1$}}
+\newcommand{\shell}[1]{\mbox{$#1$}}
+\renewcommand{\vec}[1]{\mbox{\bf {#1}}}
+
+\newcommand{\ReallySmallSpacing}{\renewcommand{\baselinestretch}{.6}\Large\normalsize}
+\newcommand{\SmallSpacing}{\renewcommand{\baselinestretch}{1.1}\Large\normalsize}
+
+\newcommand{\halfs}{\frac{1}{2}}
+
+\DefineVerbatimEnvironment{Sinput}{Verbatim}{fontshape=sl,formatcom=\color{darkblue}}
+\fvset{fontsize=\footnotesize}
+
+\newcommand{\website}[1]{{\textsf{#1}}}
+\newcommand{\code}[1]{\mbox{\footnotesize\color{darkblue}\texttt{#1}}}
+\newcommand{\pkg}[1]{{\fontseries{b}\selectfont #1}}
+\renewcommand{\pkg}[1]{{\textsf{#1}}}
+\newcommand{\todo}[1]{TODO: {\bf \textcolor{darkred}{#1}}}
+\newcommand{\Dag}{$^\dagger$}
+\newcommand{\Ast}{$^\ast$}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\begin{document}
+<<startup,echo=FALSE>>=
+opts_chunk$set(tidy=FALSE,message=FALSE,size='footnotesize',
+               background = 'white',comment=NA, digits = 3,
+               prompt = TRUE)
+knit_theme$set("bclear")
+@
+\title{ Exercises for  \\ {\it Applied Predictive Modeling} \\ Chapter 8 --- Regression Trees and Rule--Based Models}
+\author{Max Kuhn, Kjell Johnson}
+\date{Version 1\\ \today}
+
+<<ch08_startup, echo = FALSE, results='hide'>>=
+library(caret)
+library(AppliedPredictiveModeling)
+library(rpart)
+library(randomForest)
+library(ipred)
+library(party)
+library(partykit)
+library(Cubist)
+library(gbm)
+library(pls)
+library(kernlab)
+library(xtable)
+library(doMC)
+library(parallel)
+registerDoMC(detectCores(logical = FALSE) - 1)
+
+options(width = 105)
+textList <- function (x, period = FALSE, last = " and ")
+{
+    if (!is.character(x))
+        x <- as.character(x)
+    numElements <- length(x)
+    out <- if (length(x) > 0) {
+        switch(min(numElements, 3), x, paste(x, collapse = last),
+            {
+                x <- paste(x, c(rep(",", numElements - 2), last,
+                  ""), sep = "")
+                paste(x, collapse = " ")
+            })
+    }
+    else ""
+    if (period)
+        out <- paste(out, ".", sep = "")
+    out
+}
+
+hook_inline = knit_hooks$get('inline')
+knit_hooks$set(inline = function(x) {
+  if (is.character(x)) highr::hi_latex(x) else hook_inline(x)
+})
+@
+
+\newcommand{\apmfun}[1]{{\tt \small \hlkwd{#1}}}
+\newcommand{\apmarg}[1]{{\tt \small \hlkwc{#1}}}
+\newcommand{\apmstr}[1]{{\tt \small \hlstr{#1}}}
+\newcommand{\apmnum}[1]{{\tt \small \hlnum{#1}}}
+\newcommand{\apmstd}[1]{{\tt \small \hlstd{#1}}}
+\newcommand{\apmred}[1]{\textcolor[rgb]{0.8,0.0,0}{#1}}%
+
+\maketitle
+
+\thispagestyle{empty}
+      
+The solutions in this file uses several \pkg{R} packages not used in the text. To install all of the packages needed for this document, use:
+
+<<ch08_install, eval = FALSE>>=
+install.packages(c("AppliedPredictiveModeling", "caret", "Cubist", "ipred", 
+                   "mlbench", "party", "randomForest"))
+@
+  
+  
+\section*{Exercise 1}
+
+
+Recreate the simulated data from Exercise 7.2:
+<<ch08_RegressionTreesExercises1a>>=
+library(mlbench)
+set.seed(200)
+simulated <- mlbench.friedman1(200, sd = 1)
+simulated <- cbind(simulated$x, simulated$y)
+simulated <- as.data.frame(simulated)
+colnames(simulated)[ncol(simulated)] <- "y"
+@
+
+\begin{itemize}
+\item[] (a) Fit a random forest model to all of the predictors, then
+  estimate the variable importance scores:
+<<ch08_RegressionTreesExercises1b>>=
+library(randomForest)
+library(caret)
+model1 <- randomForest(y ~ ., data = simulated, importance = TRUE, ntree = 1000)
+rfImp1 <- varImp(model1, scale = FALSE)
+@
+\item[] Did the random forest model significantly use the
+  uninformative predictors (\apmstd{V6} -- \apmstd{V10})?
+\item[]
+\item[] (b) Now add an additional predictor that is highly correlated
+  with one of the informative predictors. For example:
+<<ch08_RegressionTreesExercises1c>>=
+set.seed(600)
+simulated$duplicate1 <- simulated$V1 + rnorm(200) * .1
+cor(simulated$duplicate1, simulated$V1)
+@
+\item[] Fit another random forest model to these data. Did the
+  importance score for \apmstd{V1} change? What happens when you add
+  another predictors that is also highly correlated with \apmstd{V1}?
+\item[]
+\item[] (c) Use the \apmfun{cforest} function in the \pkg{party} package
+  to fit a random forest model using conditional inference trees. The
+  \pkg{party} package function \apmfun{varimp} can be used to calculate
+  predictor importance. The \apmarg{conditional} argument of that
+  function toggles between the traditional importance measure and the
+  modified version described in \cite{17254353}. Do these importances
+  show the same pattern as the traditional random forest model?
+\item[]
+\item[] (d) Repeat this process with different tree models, such as
+  boosted trees and Cubist. Does the same pattern occur?
+\end{itemize}
+
+
+\subsection*{Solutions}
+The predictor importance scores for the simulated data set in part (a) can be seen in Table \ref{T:varImpSimulation1}.  The model places most importance on predictors 1, 2, 4, and 5, and very little importance on 6 through 10.
+
+<<ch08_ImportanceTable1, echo = FALSE, results = "asis">>=
+print(xtable(round(rfImp1,2),
+             caption = "Variable importance scores for part (a) simulation.",
+             label = "T:varImpSimulation1"))
+@
+
+Next we will add a highly correlated predictor (Part (b)) and re-model the data.  Table \ref{T:varImpSimulation2} lists the importance scores for predictors V1-V10 when we inclucde a predictor that is highly correlated with V1.  Notice that the importance score drops for V1 when a highly correlated predictor is included in the data.  Predictor V1 has dropped to third in overall importance rank. 
+
+<<ch08_sim_rf2, echo=TRUE, cache=TRUE>>=
+model2 <- randomForest(y ~ ., data = simulated, importance = TRUE, ntree = 1000)
+rfImp2 <- varImp(model2, scale = FALSE)
+
+vnames <- c('V1', 'V2', 'V3', 'V4', 'V5', 'V6', 'V7', 'V8', 'V9', 'V10', 'duplicate1')
+
+names(rfImp1) <- "Original"
+rfImp1$Variable <- factor(rownames(rfImp1), levels = vnames)
+
+names(rfImp2) <- "Extra"
+rfImp2$Variable <- factor(rownames(rfImp2), levels = vnames)
+
+rfImps <- merge(rfImp1, rfImp2, all = TRUE)
+rownames(rfImps) <- rfImps$Variable
+rfImps$Variable <- NULL
+@
+
+<<ch08_ImportanceTable2, echo = FALSE, results = "asis">>=
+print(xtable(round(rfImps,2),
+             caption = "Variable importance scores for part (b) simulation.",
+             label = "T:varImpSimulation2"))
+@
+
+Next, we will build a conditional inference random forest for the original data set and compute the corresponding predictor importance scores.  We will also build a conditional inference random forest on the data set that includes the highly correlated extra predictor with V1.
+
+<<ch08_sim_crf, cache = TRUE>>=
+library(party)
+set.seed(147)
+cforest1 <- cforest(y ~ ., data = simulated[, 1:11],
+                    controls = cforest_control(ntree = 1000))
+set.seed(147)
+cforest2 <- cforest(y ~ ., data = simulated,
+                    controls = cforest_control(ntree = 1000))
+
+cfImps1 <- varimp(cforest1)
+cfImps2 <- varimp(cforest2)
+cfImps3 <- varimp(cforest1, conditional = TRUE)
+cfImps4 <- varimp(cforest2, conditional = TRUE)
+
+cfImps1 <- data.frame(Original = cfImps1,
+                      Variable = factor(names(cfImps1), levels = vnames))
+
+cfImps2 <- data.frame(Extra = cfImps2,
+                      Variable = factor(names(cfImps2), levels = vnames))
+
+cfImps3 <- data.frame(CondInf = cfImps3,
+                      Variable = factor(names(cfImps3), levels = vnames))
+
+cfImps4 <- data.frame("CondInf Extra" = cfImps4,
+                      Variable = factor(names(cfImps4), levels = vnames))
+
+cfImps <- merge(cfImps1, cfImps2, all = TRUE)
+cfImps <- merge(cfImps, cfImps3, all = TRUE)
+cfImps <- merge(cfImps, cfImps4, all = TRUE)
+rownames(cfImps) <- cfImps$Variable
+cfImps$Variable <- factor(cfImps$Variable, levels = vnames)
+cfImps <- cfImps[order(cfImps$Variable),]
+cfImps$Variable <- NULL
+@
+
+Predictor importance scores for the conditional inference random forests can be seen in Table \ref{T:varImpSimulation3}.  The conditional inference model has a similar pattern of importance as the random forest model from Part (a), placing most importance on predictors 1, 2, 4, and 5 and very little importance on 6 through 10.  Adding a highly correlated predictor has a detrimenal effect on the importance for {\tt V1} dropping its importance rank to third.
+
+<<ch08_ImportanceTable3, echo = FALSE, results = "asis">>=
+print(xtable(round(cfImps,2),
+             caption = "Variable importance scores for part (c) simulation.",
+             label = "T:varImpSimulation3"))
+@
+
+Finally, we will examine the effect of adding a highly correlated predictor on bagging and Cubist.  We will explore bagging through the following simulation:
+
+<<ch08_sim_tb, cache = TRUE>>=
+library(ipred)
+set.seed(147)
+bagFit1 <- bagging(y ~ ., data = simulated[, 1:11], nbag = 50)
+set.seed(147)
+bagFit2 <- bagging(y ~ ., data = simulated, nbag = 50)
+bagImp1 <- varImp(bagFit1)
+names(bagImp1) <- "Original"
+bagImp1$Variable <- factor(rownames(bagImp1), levels = vnames)
+
+bagImp2 <- varImp(bagFit2)
+names(bagImp2) <- "Extra"
+bagImp2$Variable <- factor(rownames(bagImp2), levels = vnames)
+
+bagImps <- merge(bagImp1, bagImp2, all = TRUE)
+rownames(bagImps) <- bagImps$Variable
+bagImps$Variable <- NULL
+@
+
+Table \ref{T:varImpSimulation4} indicates that predictors {\tt V1}--{\tt V5} are at the top of the importance ranking.  However {\tt V6}--{\tt V10} have relatively higher importance scores as compared to the random forest importance scores.  Adding an extra highly correlated predictor with {\tt V1} has less of an impact on the overall importance score for {\tt V1} as compared to random forest.
+
+<<ch08_ImportanceTable4, echo = FALSE, results = "asis">>=
+print(xtable(round(bagImps,2),
+             caption = "Variable importance scores for part (d) simulation using bagging.",
+             label = "T:varImpSimulation4"))
+@
+
+For Cubist, Table \ref{T:varImpSimulation5} indicates that predictors {\tt V1}--{\tt V5} are at the top of the importance ranking.    Adding an extra highly correlated predictor with {\tt V1} has very little impact on the importance scores when using Cubist.
+
+<<ch08_sim_cb, cache = TRUE>>=
+library(Cubist)
+set.seed(147)
+cbFit1 <- cubist(x = simulated[, 1:10], 
+                 y = simulated$y, 
+                 committees = 100)
+cbImp1 <- varImp(cbFit1)
+names(cbImp1) <- "Original"
+cbImp1$Variable <- factor(rownames(cbImp1), levels = vnames)
+
+set.seed(147)
+cbFit2 <- cubist(x = simulated[, names(simulated) != "y"], 
+                 y = simulated$y, 
+                 committees = 100)
+cbImp2 <- varImp(cbFit2)
+names(cbImp2) <- "Extra"
+cbImp2$Variable <- factor(rownames(cbImp2), levels = vnames)
+
+cbImp <- merge(cbImp1, cbImp2, all = TRUE)
+rownames(cbImp) <- cbImp$Variable
+cbImp$Variable <- NULL
+@
+
+<<ch08_ImportanceTable5, echo = FALSE, results = "asis">>=
+print(xtable(round(cbImp,2),
+             caption = "Variable importance scores for part (d) simulation using Cubist.",
+             label = "T:varImpSimulation5"))
+@
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\clearpage
+\section*{Exercise 2}
+
+Use a simulation to show tree bias with different granularities.
+
+\subsection*{Solutions}
+
+Recall \cite{lohshih97} found that predictors that are more granular (or have more potential split points) have a greater chance of being used towards the top of a tree to partition, even if the predictor has little-to-no relationship with the response.  To investigate this phenomenon, let's develop a simple simulation.  For the simulation, we will generate one categorical predictor that is informative at separating the response into two more homogenous groups.  We will also generate a continuous predictor that is not informative at separating the response into two more homogenous groups.  We will then use both of these predictors to build a one-split tree and note which predictor is used to split the data.  This simulation will be run many times and we will tally the number of times each predictor is used as the first split.
+
+<<ch08_treeBias, echo=TRUE, eval=TRUE>>=
+
+set.seed(102)
+X1 <- rep(1:2,each=100)
+Y <- X1 + rnorm(200,mean=0,sd=4)
+set.seed(103)
+X2 <- rnorm(200,mean=0,sd=2)
+
+simData <- data.frame(Y=Y,X1=X1,X2=X2)
+@
+
+The code chuck above defines how each predictor (X1 and X2) are related to the response.  Predictor X1 has two categories and is created to separate the response into two more homogenous groups.  Predictor X2, however, is not related to the response.  Figure \ref{F:treeBiasFig1} illustrates the relationship between each predictor and the response.
+
+\begin{figure}[t!]
+  \begin{center}  
+<<ch08_treeBiasFig, echo = FALSE, out.width='.8\\linewidth', fig.width=7.5, fig.height=4>>=
+plotTheme <- bookTheme()
+trellis.par.set(plotTheme)
+bw <- bwplot(Y~X1,
+             data=simData,
+             ylab = "Y",
+             xlab = "X1",
+             horizontal = FALSE,
+             panel = function(...)
+             {
+                panel.bwplot(...)
+              }
+             )
+
+xy <- xyplot(Y~X2,
+             data=simData,
+             xlab = "X2",
+             ylab = "Y")
+
+print(bw, split=c(1,1,2,1), more=TRUE)
+print(xy, split=c(2,1,2,1))
+@
+    \caption[Tree bias sim]{The univariate relationship with each predictor and the response.  Predictor X1 has only two categories, but is defined to to create two more homogenous groups with respect to the response.  Predictor X2 has 200 possible categories (is more granular) and is not related to the response.}
+    \label{F:treeBiasFig1}
+  \end{center}
+\end{figure}
+
+<<ch08_treeBiasTreeFig1, echo = FALSE, cache = TRUE>>=
+selectedPredictors <- data.frame(Predictor=as.character())
+for (i in 1:100 ) {
+  set.seed(i)
+  X1 <- rep(1:2,each=100)
+  Y <- X1 + rnorm(200,mean=0,sd=4)
+  #Y <- rnorm(200,mean=0,sd=2)
+  set.seed(1000+i)
+  X2 <- rnorm(200,mean=0,sd=2)
+  currentSimData <- data.frame(Y=Y,X1=X1,X2=X2)
+  currentRpart <- rpart(Y~X1+X2,data=currentSimData,control=rpart.control(maxdepth=1))
+  currentPredictor <- data.frame(Predictor=rownames(currentRpart$splits)[1])
+  selectedPredictors <- rbind(selectedPredictors,currentPredictor)
+}
+@
+
+In this simulation, the frequency that each predictor is selected in presented in Table \ref{T:treeBiasTable}.  In this case, X1 and X2 are selected in near equal proportions despite the fact that the response is defined based on information from X1.  As the amount of noise in the simulation increases, the chances that X2 are selected increase.  Conversely, as the amount of noise decreases the chance that X2 is selected decreases.  This implies that the granularity provided by X2 has a strong influence on whether or not it is selected--not the fact that it has no association with the response.
+
+
+<<ch08_treeBiasTable1, echo = FALSE, results = "asis">>=
+treeBiasTable <- table(selectedPredictors)
+print(
+        xtable(table(selectedPredictors$Predictor),
+        caption = "Frequency of predictor selection for tree bias simulation.",
+        label = "T:treeBiasTable"),
+        include.colnames=FALSE
+)
+@
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\clearpage
+\section*{Exercise 3}
+In stochastic gradient boosting the bagging fraction and learning rate will govern the construction of the trees as they are guided by the gradient.  Although the optimal values of these parameters should be obtained through the tuning process, it is helpful to understand how the magnitudes of these parameters affect magnitudes of variable importance.  Figure \ref{F:gbmImpCompare} provides the variable importance plots for boosting using two extreme values for the bagging fraction (0.1 and 0.9) and the learning rate (0.1 and 0.9) for the solubility data.  The left-hand plot has both parameters set to 0.1, and the right-hand plot has both set to 0.9.
+
+\begin{itemize}
+  \item[] (a)  Why does the model on the right focus its importance on just the first few of predictors, whereas the model on the left spreads importance across more predictors?
+  \item[] (b)  Which model do you think would be more predictive of other samples?
+  \item[] (c)  How would increasing interaction depth affect the slope of predictor importance for either model in Figure \ref{F:gbmImpCompare}?
+\end{itemize}
+
+<<ch08_gbm_imp, echo = FALSE, cache = TRUE>>=
+data(solubility)
+
+trainData <- solTrainXtrans
+trainData$y <- solTrainY
+
+set.seed(100)
+gbmindx <- createFolds(solTrainY, returnTrain = TRUE)
+gbmctrl <- trainControl(method = "cv", index = gbmindx)
+
+gbmGrid <- expand.grid(interaction.depth = seq(1, 7, by = 2),
+                       n.trees = seq(100, 1000, by = 50),
+                       shrinkage = c(0.01, 0.1))
+set.seed(100)
+gbmTune <- train(solTrainXtrans, solTrainY,
+                 method = "gbm",
+                 tuneGrid = gbmGrid,
+                 trControl = gbmctrl,
+                 verbose = FALSE)
+
+gbmGrid1 <- expand.grid(interaction.depth = gbmTune$bestTune$interaction.depth,
+                        n.trees           = gbmTune$bestTune$n.trees,
+                        shrinkage         = 0.1)
+
+gbmGrid9 <- expand.grid(interaction.depth = gbmTune$bestTune$interaction.depth,
+                        n.trees           = gbmTune$bestTune$n.trees,
+                        shrinkage         = 0.9)
+
+set.seed(100)
+gbmTune11 <- train(solTrainXtrans, solTrainY,
+                 method = "gbm",
+                 tuneGrid = gbmGrid1,
+                 trControl = gbmctrl,
+                 bag.fraction = 0.1,
+                 verbose = FALSE)
+
+gbmImp11 <- varImp(gbmTune11, scale = FALSE)
+
+set.seed(100)
+gbmTune99 <- train(solTrainXtrans, solTrainY,
+                 method = "gbm",
+                 tuneGrid = gbmGrid9,
+                 trControl = gbmctrl,
+                 bag.fraction = 0.9,
+                 verbose = FALSE)
+
+gbmImp99 <- varImp(gbmTune99, scale = FALSE)
+
+@
+
+
+\begin{figure}[t!]
+  \begin{center}  
+<<ch08_gbm_imp_compare, echo = FALSE, out.width='.8\\linewidth', fig.width=7.5, fig.height=7.5>>=
+plot11 <- plot(gbmImp11, top=25, scales = list(y = list(cex = .95)))
+plot99 <- plot(gbmImp99, top=25, scales = list(y = list(cex = .95)))
+
+print(plot11, split=c(1,1,2,1), more=TRUE)
+print(plot99, split=c(2,1,2,1))
+@
+    \caption[GBM variable importance tuning parameter comparison]{A
+      comparison of variable importance magnitudes for differing
+      values of the bagging fraction and shrinkage parameters.  Both
+      tuning parameters are set to 0.1 in the left figure.  Both are
+      set to 0.9 in the right figure.}
+    \label{F:gbmImpCompare}
+  \end{center}
+\end{figure}
+
+\subsection*{Solutions}
+The model on the right focuses importance on just a few predictors for a couple of reasons.  First, as the learning rate increases towards 1, the model becomes more greedy.  As greediness increases, the model will be more likely to identify fewer predictors related to the response.  Second, as the bagging fraction increases, the model uses more of the data in model construction.  The less the stochastic element of the method (i.e. larger bagging fraction) the fewer predictors will be identified as important.  Therefore, as the learning rate and bagging fraction increase, the importance will be concentrated on fewer and fewer predictors.  
+
+At the same time, as the values of these parameters increase, model performance will correspondingly decrease.  Hence, the model on the left is likley to have better performance than the model on the right.
+
+Interaction depth also relatively affects the variable importance metric.  As tree depth increases, variable importance is likely to be spread over more predictors increasing the length of the horizontal lines in the importance figure.
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\clearpage
+\section*{Exercise 4}
+
+Use a single predictor in the solubility data, such as the molecular
+weight or the number of carbon atoms, fit several models:
+
+\begin{itemize}
+  \item[] (a)  a simple regression tree
+  \item[] (b)  a random forest model
+  \item[] (c)  different Cubist models with: a single rule or multiple
+    committees (each with and without using neighbor adjustments).
+\end{itemize}
+
+Using the test set data, plot the predictor data versus the solubility
+results. Overlay the model predictions for the test set. How do the
+model differ? Does changing the tuning parameter(s) significantly
+affect the model fit?
+
+\subsection*{Solutions}
+
+The code listed below constructs models from Parts (a) through (c), and the performance results of these models are provided in Table \ref{T:ex4Performance}.  Not surprisingly, the single tree performs the worst.  The randomness and iterative process incorporated using Random Forest improves predictive ability when using just this one predictor.  For the Cubist models, a couple of trends can be seen.  First, the no neighbor models perform better than the corresponding models that were tuned using multiple neighbors.  At the same time, using multiple committees slightly improves the predictive ability of the models.  Still, the best Cubist model (multiple committees and no neighbors) performs slightly worse than the random forest model.
+
+<<ch08_ex4_data, echo = TRUE, cache = TRUE>>=
+data(solubility)
+
+solTrainMW <- subset(solTrainXtrans,select="MolWeight")
+solTestMW <- subset(solTestXtrans,select="MolWeight")
+
+set.seed(100)
+rpartTune <- train(solTrainMW, solTrainY,
+                   method = "rpart2",
+                   tuneLength = 1)
+rpartTest <- data.frame(Method = "RPart",Y=solTestY,
+                        X=predict(rpartTune,solTestMW))
+
+rfTune <- train(solTrainMW, solTrainY,
+                method = "rf",
+                tuneLength = 1)
+rfTest <- data.frame(Method = "RF",Y=solTestY,
+                     X=predict(rfTune,solTestMW))
+
+
+cubistTune1.0 <- train(solTrainMW, solTrainY, 
+                       method = "cubist", 
+                       verbose = FALSE,
+                       metric = "Rsquared",
+                       tuneGrid = expand.grid(committees = 1, 
+                                              neighbors = 0))
+cubistTest1.0 <- data.frame(Method = "Cubist1.0",Y=solTestY,
+                            X=predict(cubistTune1.0,solTestMW))
+
+cubistTune1.n <- train(solTrainMW, solTrainY, 
+                       method = "cubist", 
+                       verbose = FALSE,
+                       metric = "Rsquared",
+                       tuneGrid = expand.grid(committees = 1, 
+                                              neighbors = c(1,3,5,7)))
+cubistTest1.n <- data.frame(Method = "Cubist1.n",Y=solTestY,
+                            X=predict(cubistTune1.n,solTestMW))
+
+cubistTune100.0 <- train(solTrainMW, solTrainY, 
+                        method = "cubist", 
+                        verbose = FALSE,
+                        metric = "Rsquared",
+                        tuneGrid = expand.grid(committees = 100, 
+                                               neighbors = 0))
+cubistTest100.0 <- data.frame(Method = "Cubist100.0",Y=solTestY,
+                              X=predict(cubistTune100.0,solTestMW))
+
+cubistTune100.n <- train(solTrainMW, solTrainY, 
+                        method = "cubist", 
+                        verbose = FALSE,
+                        metric = "Rsquared",
+                        tuneGrid = expand.grid(committees = 100, 
+                                               neighbors = c(1,3,5,7)))
+cubistTest100.n <- data.frame(Method = "Cubist100.n",Y=solTestY,
+                              X=predict(cubistTune100.n,solTestMW))
+@
+
+<<ch08_ex4PerformanceTable, echo = FALSE, results = "asis">>=
+rpartPerf <- data.frame(Method = "Recursive Partitioning", 
+                        R2 = round(rpartTune$results$Rsquared[best(rpartTune$results, "Rsquared", maximize = TRUE)],3))
+rfPerf <- data.frame(Method = "Random Forest", 
+                     R2 = round(rfTune$results$Rsquared[best(rfTune$results, "Rsquared", maximize = TRUE)],3))
+cubistPerf1.0 <- data.frame(Method = "Cubist.SingleRule.NoNeighbors", 
+                            R2 = round(cubistTune1.0$results$Rsquared[best(cubistTune1.0$results, "Rsquared", maximize = TRUE)],3))
+cubistPerf1.n <- data.frame(Method = "Cubist.SingleRule.MultNeighbors", 
+                            R2 = round(cubistTune1.n$results$Rsquared[best(cubistTune1.n$results, "Rsquared", maximize = TRUE)],3))
+cubistPerf100.0 <- data.frame(Method = "Cubist.MultCommittees.NoNeighbors", 
+                              R2 = round(cubistTune100.0$results$Rsquared[best(cubistTune100.0$results, "Rsquared", maximize = TRUE)],3))
+cubistPerf100.n <- data.frame(Method = "Cubist.MultCommittees.MultNeighbors", 
+                              R2 = round(cubistTune100.n$results$Rsquared[best(cubistTune100.n$results, "Rsquared", maximize = TRUE)],3))
+
+ex4Results <- rbind(rpartPerf,rfPerf,cubistPerf1.0,cubistPerf1.n,cubistPerf100.0,cubistPerf100.n)
+
+print(xtable(ex4Results,
+             align=c("ll|r"),
+             caption = "Model performance using only Molecular Weight as a predictor.",
+             label = "T:ex4Performance"),
+      include.rownames=FALSE
+)
+@
+
+Test set performance is illustrated in Figure \ref{F:Ex4TestPreds}.  The performance for recursive partitioning stands out since there are only two possible X values due to the split on the single predictor.  Performance across random forest and the Cubist models are similar, with random forest having slightly smaller vertical spread across the range of the line of agreement.  All of the Cubist models appear to have a lower-bound on predicted values at approximately -4.5.
+
+\begin{figure}[h]
+\begin{center}
+<<ch08_ex4Test, echo = FALSE, results='hide', fig.width=7.5, fig.height=9.5,out.width='0.8\\linewidth'>>=
+cubistEx4Test <- rbind(rpartTest,
+                       rfTest,cubistTest1.0,cubistTest1.n,cubistTest100.0,cubistTest100.n)
+scatterTheme <- caretTheme()
+
+scatterTheme$plot.line$col <- c("blue")
+scatterTheme$plot.line$lwd <- 2
+
+scatterTheme$plot.symbol$col <- rgb(0, 0, 0, .3)
+scatterTheme$plot.symbol$cex <- 0.8
+scatterTheme$plot.symbol$pch <- 16
+
+scatterTheme$add.text <- list(cex = 0.6)
+
+trellis.par.set(scatterTheme)
+xyplot(X ~ Y | Method,
+       cubistEx4Test,
+       layout = c(2,3),
+       panel = function(...) {
+         theDots <- list(...)
+         panel.xyplot(..., type = c("p", "g"))
+         corr <- round(cor(theDots$x, theDots$y), 2)
+         panel.text(44,
+                    min(theDots$y),
+                    paste("corr:", corr))
+       },
+       ylab = "Predicted",
+       xlab = "Observed")
+@
+\caption[Ex4 Test Performance]{Test set performance across models using only Molecular Weight as a predictor.}
+\label{F:Ex4TestPreds}
+\end{center}
+\end{figure}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+\clearpage
+\section*{Exercise 5}
+
+Fit different tree-- and rule--based models for the Tecator data discussed
+in Exercise 6.1. How do they compare to
+linear models? Do the between--predictor correlations seem to affect
+your models? If so, how would you transform or re--encode the
+predictor data to mitigate this issue?
+
+\subsection*{Solutions}
+
+The optimal RMSE in Exercise 6.1 came from the PLS model and was 0.65.  We can load the data in the same way as before:
+
+<<ch08_meat_data, cache = TRUE>>=
+library(caret)
+data(tecator)
+
+set.seed(1029)
+inMeatTraining <- createDataPartition(endpoints[, 3], p = 3/4, list= FALSE)
+
+absorpTrain <- absorp[ inMeatTraining,]
+absorpTest  <- absorp[-inMeatTraining,]
+proteinTrain <- endpoints[ inMeatTraining, 3]
+proteinTest  <- endpoints[-inMeatTraining,3]
+
+absorpTrain <- as.data.frame(absorpTrain)
+absorpTest  <- as.data.frame(absorpTest)
+
+ctrl <- trainControl(method = "repeatedcv", repeats = 5)
+@
+
+A simple CART model can be fit using the syntax here:
+
+<<ch08_meat_cart, cache = TRUE, warning=FALSE>>=
+set.seed(529)
+meatCART <- train(x = absorpTrain, y = proteinTrain, 
+                  method = "rpart", 
+                  trControl = ctrl, 
+                  tuneLength = 25)
+@
+
+The resulting tuning parameter profile is presented in Figure \ref{F:meat_cart}.  For this mode, the optimal RMSE is \Sexpr{round(meatCART$results$RMSE[best(meatCART$results, "RMSE", maximize = FALSE)],3)}.  This value is worse than the optimal value found using the PLS model.
+
+\begin{figure}
+  \begin{center}  
+<<ch08_Meat_cart_plot, echo = FALSE,out.width='.8\\linewidth',fig.width=7.5,fig.height=4>>=
+ggplot(meatCART) + scale_x_log10()
+@
+    \caption{The RMSE resampling profile for the single CART model.}
+    \label{F:meat_cart}
+  \end{center}
+\end{figure}
+
+Next we will tune and evaluate the following models: bagged trees, random forest, gradient boosting machines, and Cubist.  The tuning parameter profiles for random forest, gradient boosting machines, and Cubist can be found in Figures \ref{F:meat_rf}, \ref{F:meat_gbm}, and \ref{F:meat_cubist}, respectively.
+<<ch08_meat_treebag, cache = TRUE>>=
+set.seed(529)
+meatBagged <- train(x = absorpTrain, y = proteinTrain, 
+                    method = "treebag", 
+                    trControl = ctrl)
+@
+
+<<ch08_meat_rf, cache = TRUE>>=
+set.seed(529)
+meatRF <- train(x = absorpTrain, y = proteinTrain, 
+                method = "rf", 
+                ntree = 1500,
+                tuneLength = 10,
+                trControl = ctrl)
+@
+
+<<ch08_meat_gbm, cache = TRUE>>=
+gbmGrid <- expand.grid(interaction.depth = seq(1, 7, by = 2),
+                       n.trees = seq(100, 1000, by = 50),
+                       shrinkage = c(0.01, 0.1))
+set.seed(529)
+meatGBM <- train(x = absorpTrain, y = proteinTrain, 
+                 method = "gbm", 
+                 verbose = FALSE,
+                 tuneGrid = gbmGrid,
+                 trControl = ctrl)
+@
+
+<<ch08_meat_cb, cache = TRUE>>=
+set.seed(529)
+meatCubist <- train(x = absorpTrain, y = proteinTrain, 
+                    method = "cubist", 
+                    verbose = FALSE,
+                    tuneGrid = expand.grid(committees = c(1:10, 20, 50, 75, 100), 
+                                           neighbors = c(0, 1, 5, 9)),
+                    trControl = ctrl)
+@
+
+
+\begin{figure}
+  \begin{center}  
+<<ch08_Meat_rf_plot, echo = FALSE,out.width='.8\\linewidth',fig.width=7.5,fig.height=4>>=
+ggplot(meatRF)
+@
+    \caption{The RMSE resampling profile for the random forest model.}
+    \label{F:meat_rf}
+  \end{center}
+\end{figure}
+
+
+\begin{figure}
+  \begin{center}  
+<<ch08_Meat_gbm_plot, echo = FALSE,out.width='.9\\linewidth',fig.width=9,fig.height=5>>=
+ggplot(meatGBM) + theme(legend.position = "top")
+@
+    \caption{The RMSE resampling profile for the gradient boosting machine model.}
+    \label{F:meat_gbm}
+  \end{center}
+\end{figure}
+
+
+\begin{figure}
+  \begin{center}  
+<<ch08_Meat_cubist_plot, echo = FALSE,out.width='.8\\linewidth',fig.width=9,fig.height=5>>=
+ggplot(meatCubist) + theme(legend.position = "top")
+@
+    \caption{The RMSE resampling profile for the cubist model.}
+    \label{F:meat_cubist}
+  \end{center}
+\end{figure}
+
+<<ch08_meat_tree_summary>>=
+load("meatPLS.RData")
+load("meatNet.RData")
+meatResamples <- resamples(list(CART = meatCART,
+                                GBM = meatGBM,
+                                Cubist = meatCubist,
+                                "Bagged Tree" = meatBagged,
+                                "Random Forest" = meatRF,
+                                PLS = meatPLS,
+                                "Neural Network" = meatNet))
+@
+
+To compare model performance across those built in Chapters 6, 7, and 8, we can examine the resampling performance distributions (Figure \ref{F:meatCompare08}).  Clearly the distributions of the PLS, Cubist, and neural network models indicate better performance than the tree-based models with RMSE values well under 1 and less overall variation.
+
+The latent variable characteristic of PLS and neural network models could be crucial model characteristics for this data and could be better suited for handling between-predictor correlations.
+
+\begin{figure}[t!]
+  \begin{center}  
+<<ch08_meat_compare_plot, echo = FALSE, fig.width=7, fig.height=3.5, out.width=".8\\textwidth">>=
+bookTheme()
+bwplot(meatResamples, metric = "RMSE")
+@
+    \caption{Resampling distributions of tree-- and rule--based models, along with the best models from the previous two chapters (PLS and neural networks).}
+    \label{F:meatCompare08}
+  \end{center}
+\end{figure}
+
+<<ch08_meat_test, echo=FALSE, eval=FALSE>>=
+postResample(predict(meatPLS, absorpTest), proteinTest)
+postResample(predict(meatCubist, absorpTest), proteinTest)
+postResample(predict(meatNet, absorpTest), proteinTest)
+@
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\clearpage
+\section*{Exercise 6}
+
+Return to the permeability problem described in Exercises 6.2 and 7.4.  Train several tree--based models and evaluate the resampling and test set performance.
+ \begin{itemize}
+  \item[] (a) Which tree--based model gives the optimal resampling and test set performance?
+  \item[] (b) Do any of these models outperform the linear or non--linear based regression models you have previously developed for this data?  What criteria did you use to compare models' performance?
+  \item[] (c) Of all the models you have developed thus far, which, if any, would you recommend to replace the permeability laboratory experiment?
+\end{itemize}
+
+\subsection*{Solutions}
+
+In order to make a parallel comparison to the results in Exercises 6.2 and 7.4, we need to perform the same pre-processing steps and set up the identical validation approach.  Recall that the optimal $R^2$ value for linear based methods was 0.58 (Elastic Net) and for non-linear based methods was 0.55 (SVM).  The following syntax provides the same pre-processing, data partition into training and testing sets, and validation set-up.
+
+<<ch08_perm_load, echo=TRUE, eval=TRUE>>=
+library(AppliedPredictiveModeling)
+data(permeability)
+
+#Identify and remove NZV predictors
+nzvFingerprints <- nearZeroVar(fingerprints)
+noNzvFingerprints <- fingerprints[,-nzvFingerprints]
+
+#Split data into training and test sets
+set.seed(614)
+trainingRows <- createDataPartition(permeability, 
+                                    p = 0.75, 
+                                    list = FALSE)
+
+trainFingerprints <- noNzvFingerprints[trainingRows,]
+trainPermeability <- permeability[trainingRows,]
+
+testFingerprints <- noNzvFingerprints[-trainingRows,]
+testPermeability <- permeability[-trainingRows,]
+
+set.seed(614)
+ctrl <- trainControl(method = "LGOCV")
+@
+
+
+Next, we will find optimal tuning parameters for simple CART, RF and GBM models.
+
+<<ch08_permeabilityRpartTune, echo = TRUE, eval = TRUE, cache = TRUE>>=
+set.seed(614)
+rpartGrid <- expand.grid(maxdepth= seq(1,10,by=1))
+rpartPermTune <- train(x = trainFingerprints, y = log10(trainPermeability),
+                       method = "rpart2",
+                       tuneGrid = rpartGrid,
+                       trControl = ctrl)
+@
+
+<<ch08_permeabilityRFTune, echo = TRUE, eval = TRUE, cache = TRUE>>=
+set.seed(614)
+
+rfPermTune <- train(x = trainFingerprints, y = log10(trainPermeability),
+                    method = "rf",
+                    tuneLength = 10,
+                    importance = TRUE,
+                    trControl = ctrl)
+@
+
+<<ch08_permeabilityGBMTune, echo = TRUE, eval = TRUE, cache = TRUE>>=
+set.seed(614)
+gbmGrid <- expand.grid(interaction.depth=seq(1,6,by=1),
+                       n.trees=c(25,50,100,200),
+                       shrinkage=c(0.01,0.05,0.1))
+gbmPermTune <- train(x = trainFingerprints, y = log10(trainPermeability),
+                     method = "gbm",
+                     verbose = FALSE,
+                     tuneGrid = gbmGrid,
+                     trControl = ctrl)
+@
+
+Figure \ref{F:permeabilityRpartTunePlot} indicates that the optimal tree depth that maximizes $R^2$ is \Sexpr{rpartPermTune$results$maxdepth[best(rpartPermTune$results, "Rsquared", maximize = TRUE)]}, with an $R^2$ of \Sexpr{round(rpartPermTune$results$Rsquared[best(rpartPermTune$results, "Rsquared", maximize = TRUE)],2)}.  This result is slightly better than what we found with either the selected linear or non-linear based methods.
+
+\begin{figure}[ht]
+  \begin{center}  
+<<ch08_permeabilityRpartTunePlot, echo = FALSE, results='hide', fig.width=7, fig.height=4.5,out.width='.8\\linewidth'>>=
+plotTheme <- bookTheme()
+trellis.par.set(plotTheme)
+plot(rpartPermTune,metric="Rsquared")
+@
+  \caption{Recursive partitioning tuning parameter profile for the permeability data}
+\label{F:permeabilityRpartTunePlot}
+\end{center}
+\end{figure}
+
+
+Figure \ref{F:permeabilityRFTunePlot} indicates that the optimal $m_{try}$ value that maximizes $R^2$ is \Sexpr{rfPermTune$results$mtry[best(rfPermTune$results, "Rsquared", maximize = TRUE)]}, with an $R^2$ of \Sexpr{round(rfPermTune$results$Rsquared[best(rfPermTune$results, "Rsquared", maximize = TRUE)],2)}.  The tuning parameter profile as well as the similar performance results with recursive partitioning indicates that the underlying data structure is fairly consistent across the samples.  Hence, the modeling process does not benefit from the reduction in variance induced by random forests.
+
+\begin{figure}[ht]
+  \begin{center}  
+<<ch08_permeabilityRFTunePlot, echo = FALSE, results='hide', fig.width=7, fig.height=4.5,out.width='.8\\linewidth'>>=
+plotTheme <- bookTheme()
+trellis.par.set(plotTheme)
+plot(rfPermTune,metric="Rsquared")
+@
+  \caption{Random forest tuning parameter profile for the permeability data}
+\label{F:permeabilityRFTunePlot}
+\end{center}
+\end{figure}
+
+Next, let's look at the variable importance of the top 10 predictors for the random forest model (Figure \ref{F:permeabilityRFVarImpPlot}).  Clearly a handful of predictors are identified as most important by random forests.
+
+\begin{figure}[!ht]
+  \begin{center}  
+<<ch08_permeabilityRFVarImpPlot, echo = FALSE, results='hide', fig.width=8, fig.height=6,out.width='.8\\linewidth'>>=
+  rfPermVarImp = varImp(rfPermTune)
+
+  plotTheme <- bookTheme()
+  trellis.par.set(plotTheme)
+  plot(rfPermVarImp, top=10, scales = list(y = list(cex = .85)))
+@
+    \caption{Variable importance for RF model for permeability data}
+    \label{F:permeabilityRFVarImpPlot}
+  \end{center}
+\end{figure}
+
+
+Figure \ref{F:permeabilityGBMTunePlot} indicates that the optimal interaction depth, number of trees, and shrinkage that maximize $R^2$ are \Sexpr{gbmPermTune$results$interaction.depth[best(gbmPermTune$results, "Rsquared", maximize = TRUE)]}, \Sexpr{gbmPermTune$results$n.trees[best(gbmPermTune$results, "Rsquared", maximize = TRUE)]}, and \Sexpr{gbmPermTune$results$shrinkage[best(gbmPermTune$results, "Rsquared", maximize = TRUE)]}, respectively, with an $R^2$ of \Sexpr{round(gbmPermTune$results$Rsquared[best(gbmPermTune$results, "Rsquared", maximize = TRUE)],2)}.
+
+There are a couple of interesting characteristics we see from the GBM tuning parameter profiles.  First, fewer trees with a tiny amount of shrinkage is optimal.  This, again, points to the stability of the underlying samples.  Second, a more complex model like GBM is not necessary for this data.  Instead, a simpler model like a linear-based technique or a single CART tree provides near optimal results while at the same time being more interpretable than, say, the optimal random forest model.
+
+\begin{figure}[ht]
+  \begin{center}  
+<<ch08_permeabilityGbmTunePlot, echo = FALSE, results='hide', fig.width=7, fig.height=4.5,out.width='.8\\linewidth'>>=
+plotTheme <- bookTheme()
+trellis.par.set(plotTheme)
+plot(gbmPermTune,metric="Rsquared")
+@
+  \caption{Gradient boosting machine tuning parameter profile for the permeability data}
+\label{F:permeabilityGBMTunePlot}
+\end{center}
+\end{figure}
+
+The optimal recursive partitioning tree is presented in Figure \ref{F:rpartPermTree}.  This tree reveals that similar to the variable importance rankings from random forests, X6, X93, and X157 play an important role in separating samples.  Also, the splits reveal the impact of the presence (\textgreater 0.5) or absence of the fingerprint on permeability.  Having fingerprint X6 appears to be associated with higher overall permeability values.  Likewise, not having fingerprint X6 while having fingerprint X93 appears to be associated with lower overall permeability values.
+
+\begin{sidewaysfigure}
+\begin{center}  
+<<ch08_permeabilityRpartFig, echo = FALSE, cache=FALSE, warning=FALSE, results='hide', fig.width=12, fig.height=10, out.width='0.8\\linewidth'>>=
+plot(as.party(rpartPermTune$finalModel),gp=gpar(fontsize=11))
+@
+  \caption{Optimal recursive partitioning tree for permeability data}
+\label{F:rpartPermTree}
+\end{center}
+\end{sidewaysfigure}
+
+The findings of this exercise as well as 6.2 and 7.4 indicate that an interpretable model like recursive partitioning ($R^2$ = \Sexpr{round(rpartPermTune$results$Rsquared[best(rpartPermTune$results, "Rsquared", maximize = TRUE)],2)}) performs just as well as any of the more complex models.  An $R^2$ at this level may or may not be sufficient to replace the permeability laboratory experiment.  However, these findings may enable a gross computational screening which could identify compounds that are likely to be at the extremes of permeability.  The predictors identified by recursive partitioning and random forests may also provide key insights about structures that are relevant to compounds' permeability.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\clearpage
+\section*{Exercise 7}
+
+Refer to Exercises 6.3 and 7.5 which describe a chemical manufacturing process.  Use the same data imputation, data--splitting and pre--processing steps as before and train several tree--based models.
+\begin{itemize}
+  \item[] (a) Which tree--based regression model gives the optimal resampling and test set performance?
+  \item[] (b) Which predictors are most important in the optimal tree--based regression model?  Do either the biological or process variables dominate the list?  How do the top 10 important predictors compare to the top 10 predictors from the optimal linear and non--linear models?
+  \item[] (c) Plot the optimal single tree with the distribution of yield in the terminal nodes.  Does this view of the data provide additional knowledge about the biological or process predictors and their relationship with yield?
+\end{itemize}
+
+\subsection*{Solutions}
+
+We will use the same pre-processing steps and validation approach as in Exercises 6.3 and 7.5.  In Exercise 6.3, the cross-validated $R^2$ value for PLS was 0.57, and the key predictors were manufacturing processes 32, 09, and 13.  The pairwise plots of these predictors with the response may indicate a non--linear pattern of these predictors with the response.  In Exercise 7.5, the MARS model was optimal with a cross-validated $R^2$ of 0.52.  MARS singled out manufacturing processes 32 and 09 for predicting the response.
+
+<<ch08_chem_load>>=
+library(AppliedPredictiveModeling)
+data(ChemicalManufacturingProcess)
+
+predictors <- subset(ChemicalManufacturingProcess,select= -Yield)
+yield <- subset(ChemicalManufacturingProcess,select="Yield")
+
+set.seed(517)
+trainingRows <- createDataPartition(yield$Yield, 
+                                    p = 0.7, 
+                                    list = FALSE)
+
+trainPredictors <- predictors[trainingRows,]
+trainYield <- yield[trainingRows,]
+
+testPredictors <- predictors[-trainingRows,]
+testYield <- yield[-trainingRows,]
+
+#Pre-process trainPredictors and apply to trainPredictors and testPredictors
+pp <- preProcess(trainPredictors,method=c("BoxCox","center","scale","knnImpute"))
+ppTrainPredictors <- predict(pp,trainPredictors)
+ppTestPredictors <- predict(pp,testPredictors)
+
+#Identify and remove NZV
+nzvpp <- nearZeroVar(ppTrainPredictors)
+ppTrainPredictors <- ppTrainPredictors[-nzvpp]
+ppTestPredictors <- ppTestPredictors[-nzvpp]
+
+#Identify and remove highly correlated predictors
+predcorr = cor(ppTrainPredictors)
+highCorrpp <- findCorrelation(predcorr)
+ppTrainPredictors <- ppTrainPredictors[, -highCorrpp]
+ppTestPredictors <- ppTestPredictors[, -highCorrpp]
+
+#Set-up trainControl
+set.seed(517)
+ctrl <- trainControl(method = "boot", number = 25)
+@
+
+Next, we will find optimal tuning parameters for simple CART, RF, GBM, and Cubist models.
+
+<<ch08_chemRpartTune, echo = TRUE, eval = TRUE, cache = TRUE>>=
+set.seed(614)
+rpartGrid <- expand.grid(maxdepth= seq(1,10,by=1))
+rpartChemTune <- train(x = ppTrainPredictors, y = trainYield,
+                       method = "rpart2",
+                       metric = "Rsquared",
+                       tuneGrid = rpartGrid,
+                       trControl = ctrl)
+@
+
+<<ch08_chemRFTune, echo = TRUE, eval = TRUE, cache = TRUE>>=
+set.seed(614)
+
+rfGrid <- expand.grid(mtry=seq(2,38,by=3))
+
+rfChemTune <- train(x = ppTrainPredictors, y = trainYield,
+                    method = "rf",
+                    tuneGrid = rfGrid,
+                    metric = "Rsquared",
+                    importance = TRUE,
+                    trControl = ctrl)
+@
+
+<<ch08_chemGBMTune, echo = TRUE, eval = TRUE, cache = TRUE>>=
+set.seed(614)
+gbmGrid <- expand.grid(interaction.depth=seq(1,6,by=1),
+                       n.trees=c(25,50,100,200),
+                       shrinkage=c(0.01,0.05,0.1,0.2))
+
+gbmChemTune <- train(x = ppTrainPredictors, y = trainYield,
+                     method = "gbm",
+                     metric = "Rsquared",
+                     verbose = FALSE,
+                     tuneGrid = gbmGrid,
+                     trControl = ctrl)
+@
+
+<<ch08_chemCubistTune, echo = TRUE, eval = TRUE, cache = TRUE>>=
+set.seed(614)
+cubistGrid <- expand.grid(committees = c(1, 5, 10, 20, 50, 100), 
+                          neighbors = c(0, 1, 3, 5, 7))
+
+cubistChemTune <- train(x = ppTrainPredictors, y = trainYield,
+                        method = "cubist", 
+                        verbose = FALSE,
+                        metric = "Rsquared",
+                        tuneGrid = cubistGrid,
+                        trControl = ctrl)
+@
+
+The optimal recursive partitioning model has a bootstrap CV $R^2$ value of \Sexpr{round(rpartChemTune$results$Rsquared[best(rpartChemTune$results, "Rsquared", maximize = TRUE)],2)}.  This result is substantially worse than what we found with either the optimal PLS or MARS models.  The random forest and gradient boosting machine models have bootstrap CV $R^2$ values of \Sexpr{round(rfChemTune$results$Rsquared[best(rfChemTune$results, "Rsquared", maximize = TRUE)],2)} and \Sexpr{round(gbmChemTune$results$Rsquared[best(gbmChemTune$results, "Rsquared", maximize = TRUE)],2)}, respectively.  These are similar to the MARS model results but still not quite as good as the PLS model results.
+
+Figure \ref{F:chemCubistTunePlot} provides the tuning parameter profile plot for the Cubist model.  Here, the optimal bootstrap CV $R^2$ value is \Sexpr{round(cubistChemTune$results$Rsquared[best(cubistChemTune$results, "Rsquared", maximize = TRUE)],2)}, which occurs using \Sexpr{cubistChemTune$results$neighbors[best(cubistChemTune$results, "Rsquared", maximize = TRUE)]} neighbor and \Sexpr{cubistChemTune$results$committees[best(cubistChemTune$results, "Rsquared", maximize = TRUE)]} committees.  Therefore very localized information is useful in constructing the model; as the number the number of neighbors increases, the optimal performance decreases.  Also adjusting the response via committees is necessary to improve prediction.
+
+
+
+\begin{figure}[ht]
+  \begin{center}  
+<<ch08_chemCubistTunePlot, echo = FALSE, results='hide', fig.width=7, fig.height=4.5,out.width='.8\\linewidth'>>=
+plotTheme <- bookTheme()
+trellis.par.set(plotTheme)
+plot(cubistChemTune,metric="Rsquared")
+@
+  \caption{Cubist tuning parameter profile for the chemical manufacturing data}
+\label{F:chemCubistTunePlot}
+\end{center}
+\end{figure}
+
+\begin{figure}[h]
+\begin{center}
+<<ch08_chemCubistTest, echo = FALSE, results='hide', fig.width=5, fig.height=5,out.width='0.6\\linewidth'>>=
+cubistChemTest <- data.frame(Observed=testYield,Predicted=predict(cubistChemTune,ppTestPredictors))
+scatterTheme <- caretTheme()
+
+scatterTheme$plot.line$col <- c("blue")
+scatterTheme$plot.line$lwd <- 2
+
+scatterTheme$plot.symbol$col <- rgb(0, 0, 0, .3)
+scatterTheme$plot.symbol$cex <- 0.8
+scatterTheme$plot.symbol$pch <- 16
+
+scatterTheme$add.text <- list(cex = 0.6)
+
+trellis.par.set(scatterTheme)
+xyplot(Predicted ~ Observed,
+       cubistChemTest,
+       panel = function(...) {
+         theDots <- list(...)
+         panel.xyplot(..., type = c("p", "g","r","smooth"))
+         corr <- round(cor(theDots$x, theDots$y), 2)
+         panel.text(44,
+                    min(theDots$y),
+                    paste("corr:", corr))
+       },
+       ylab = "Predicted",
+       xlab = "Observed")
+@
+\caption[cubist manufacturing test]{Cubist predictions for the test set for the chemical manufacturing data.}
+\label{F:cubistChemTestPreds}
+\end{center}
+\end{figure}
+
+
+The Cubist model provides the best performance across all models we have tuned across this exercise as well as Exercises 6.3 and 7.5. The test set predictions for the Cubist model are presented in Figure \ref{F:cubistChemTestPreds}, with an $R^2$ value of \Sexpr{round(cor(cubistChemTest$Observed,cubistChemTest$Predicted)^2, 3)}.  This result is better than any of the previous models.
+
+
+
+Figure \ref{F:cubistChemImp} lists the top 15 important predictors for the manufacturing data.  Again, manufacturing processes 32 and 09 are at the top, while process 13 is in the top 5.  All models thus far point towards processes 32 and 09, which should be investigated further to better understand if these can be controlled to improve yield.  The role of biological material 03 at its impact on yield should also be investigated.
+
+\begin{figure}[h]
+\begin{center}
+<<ch08_chemCubistVarImp, echo = FALSE, results='hide', fig.width=8, fig.height=6,out.width='0.8\\linewidth'>>=
+cubistChemImp <- varImp(cubistChemTune, scale = FALSE)
+bookTheme()
+plot(cubistChemImp, top=15, scales = list(y = list(cex = 0.8)))
+@
+\caption[Cubist Importance]{Cubist variable importance scores for the manufacturing data.}
+\label{F:cubistChemImp}
+\end{center}
+\end{figure}
+
+The optimal recursive partitioning tree is presented in Figure \ref{F:rpartChemTree}.  Manufacturing processes 32 and 13 are at the top, with higher values of process 32 being associated with larger yields.  Lower values of process 32 are associated with smaller yields.  However, a lower values of process 32 may be counter-acted with a corresponding lower value of process 13.
+
+\begin{sidewaysfigure}
+\begin{center}  
+<<ch08_chemRpartFig, echo = FALSE, cache=FALSE, warning=FALSE, results='hide', fig.width=12, fig.height=10, out.width='0.8\\linewidth'>>=
+plot(as.party(rpartChemTune$finalModel),gp=gpar(fontsize=11))
+@
+  \caption{Optimal recursive partitioning tree for chemical manufacturing data}
+\label{F:rpartChemTree}
+\end{center}
+\end{sidewaysfigure}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\clearpage
+\section*{Session Info}
+
+<<ch08_session, echo = FALSE, results='asis'>>=
+toLatex(sessionInfo())
+@
+
+
+\bibliographystyle{ECA_jasa}
+\bibliography{Ch_08_Ex_sol}
+
+
+\end{document}
+
+
+
+ 

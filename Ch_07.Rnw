@@ -1,0 +1,947 @@
+\documentclass[12pt]{article}
+
+\usepackage{amsmath}
+\usepackage{graphicx}
+\usepackage{color}
+\usepackage{xspace}
+\usepackage{fancyvrb}
+\usepackage[
+         colorlinks=true,
+         linkcolor=blue,
+         citecolor=blue,
+         urlcolor=blue]
+         {hyperref}
+         
+\usepackage[default]{jasa_harvard}   
+%\usepackage{JASA_manu}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\setlength{\oddsidemargin}{-.25 truein}
+\setlength{\evensidemargin}{0truein}
+\setlength{\topmargin}{-0.2truein}
+\setlength{\textwidth}{7 truein}
+\setlength{\textheight}{8.5 truein}
+\setlength{\parindent}{0truein}
+\setlength{\parskip}{0.07truein}
+
+\definecolor{darkred}{rgb}{0.6,0.0,0}
+\definecolor{darkblue}{rgb}{.165, 0, .659}
+\definecolor{grey}{rgb}{0.85,0.85,0.85}
+\definecolor{darkorange}{rgb}{1,0.54,0}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+\newcommand{\bld}[1]{\mbox{\boldmath $#1$}}
+\newcommand{\shell}[1]{\mbox{$#1$}}
+\renewcommand{\vec}[1]{\mbox{\bf {#1}}}
+
+\newcommand{\ReallySmallSpacing}{\renewcommand{\baselinestretch}{.6}\Large\normalsize}
+\newcommand{\SmallSpacing}{\renewcommand{\baselinestretch}{1.1}\Large\normalsize}
+
+\newcommand{\halfs}{\frac{1}{2}}
+
+\DefineVerbatimEnvironment{Sinput}{Verbatim}{fontshape=sl,formatcom=\color{darkblue}}
+\fvset{fontsize=\footnotesize}
+
+\newcommand{\website}[1]{{\textsf{#1}}}
+\newcommand{\code}[1]{\mbox{\footnotesize\color{darkblue}\texttt{#1}}}
+\newcommand{\pkg}[1]{{\fontseries{b}\selectfont #1}}
+\renewcommand{\pkg}[1]{{\textsf{#1}}}
+\newcommand{\todo}[1]{TODO: {\bf \textcolor{darkred}{#1}}}
+\newcommand{\Dag}{$^\dagger$}
+\newcommand{\Ast}{$^\ast$}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\begin{document}
+
+<<startup,echo=FALSE>>=
+opts_chunk$set(tidy=FALSE,message=FALSE,size='footnotesize',
+               background = 'white',comment=NA, digits = 3,
+               prompt = TRUE,warning=FALSE)
+knit_theme$set("bclear")
+@
+\title{ Exercises for  \\ {\it Applied Predictive Modeling} \\ Chapter 7 --- Nonlinear Regression Models}
+\author{Max Kuhn, Kjell Johnson}
+\date{Version 1\\ \today}
+
+<<ch07_startup, echo = FALSE, results='hide'>>=
+library(caret)
+library(AppliedPredictiveModeling)
+library(doMC)
+library(lattice)
+library(xtable)
+library(parallel)
+registerDoMC(detectCores(logical = FALSE) - 1)
+
+options(width = 105)
+textList <- function (x, period = FALSE, last = " and ")
+{
+    if (!is.character(x))
+        x <- as.character(x)
+    numElements <- length(x)
+    out <- if (length(x) > 0) {
+        switch(min(numElements, 3), x, paste(x, collapse = last),
+            {
+                x <- paste(x, c(rep(",", numElements - 2), last,
+                  ""), sep = "")
+                paste(x, collapse = " ")
+            })
+    }
+    else ""
+    if (period)
+        out <- paste(out, ".", sep = "")
+    out
+}
+
+hook_inline = knit_hooks$get('inline')
+knit_hooks$set(inline = function(x) {
+  if (is.character(x)) highr::hi_latex(x) else hook_inline(x)
+})
+
+options(width = 80)
+@
+
+\newcommand{\apmfun}[1]{{\tt \small \hlkwd{#1}}}
+\newcommand{\apmarg}[1]{{\tt \small \hlkwc{#1}}}
+\newcommand{\apmstr}[1]{{\tt \small \hlstr{#1}}}
+\newcommand{\apmnum}[1]{{\tt \small \hlnum{#1}}}
+\newcommand{\apmstd}[1]{{\tt \small \hlstd{#1}}}
+\newcommand{\apmred}[1]{\textcolor[rgb]{0.8,0.0,0}{#1}}%
+
+\maketitle
+
+\thispagestyle{empty}
+      
+The solutions in this file uses several \pkg{R} packages not used in the text. To install all of the packages needed for this document, use:
+
+<<ch07_install, eval = FALSE>>=
+install.packages(c("AppliedPredictiveModeling", "caret", "earth", "kernlab", 
+                   "latticeExtra", "mlbench", "nnet", "plotmo"))
+@
+   
+\section*{Exercise 1}
+
+Investigate the relationship between the cost, $\epsilon$ and kernel parameters for a support vector machine model. Simulate a single predictor and a non--linear relationship, such as a $sin$ wave shown in Fig. 7.7:
+<<ch07_RegressionNonCovExercises1a>>=
+set.seed(100)
+x <- runif(100, min = 2, max = 10)
+y <-  sin(x) + rnorm(length(x)) * .25
+sinData <- data.frame(x = x, y = y)
+
+## Create a grid of x values to use for prediction
+dataGrid <- data.frame(x = seq(2, 10, length = 100))
+@
+
+
+\begin{itemize}
+  \item[] (a) Fit different models using a radial basis function and different values of the cost (the \apmarg{C} parameter) and $\epsilon$. Plot the fitted curve. For example:
+<<ch07_RegressionNonCovExercises1b, results='hide',out.width='.8\\linewidth',fig.width=6,fig.height=4.25>>=
+library(kernlab)
+rbfSVM <- ksvm(x = x, y = y, data = sinData,
+               kernel ="rbfdot", kpar = "automatic",
+               C = 1, epsilon = 0.1)
+modelPrediction <- predict(rbfSVM, newdata = dataGrid)
+## This is a matrix with one column. We can plot the
+## model predictions by adding points to the previous plot
+plot(x, y)
+points(x = dataGrid$x, y = modelPrediction[,1],
+       type = "l", col = "blue")
+## Try other parameters
+@
+  \item[] (b) The $\sigma$ parameter can be adjusted using the \apmarg{kpar} argument, such as {\tt \Sexpr{'kpar = list(sigma = 1)'}}. Try different values of $\sigma$ to understand how this parameter changes the model fit. How do the cost, $\epsilon$ and $\sigma$ values affect the model?
+
+\end{itemize}
+
+\subsection*{Solutions}
+
+A series of SVM models will be fit over four values of $\epsilon$ and the cost parameter. A fixed value of $\sigma$ determined automatically using the \apmfun{sigest} function in the \pkg{kernlab} package. The same value is guaranteed by setting the random number seed before each SVM model.
+ 
+<<sim_cost_eps, results='hide'>>=
+svmParam1 <- expand.grid(eps = c(.01, 0.05, .1, .5), costs = 2^c(-2, 0, 2, 8))
+
+for(i in 1:nrow(svmParam1)) {
+  set.seed(131)
+  rbfSVM <- ksvm(x = x, y = y, data = sinData,
+                 kernel ="rbfdot", kpar = "automatic",
+                 C = svmParam1$costs[i], epsilon = svmParam1$eps[i])
+
+  tmp <- data.frame(x = dataGrid$x, 
+                    y = predict(rbfSVM, newdata = dataGrid),
+                    eps = paste("epsilon:", format(svmParam1$eps)[i]),
+                    costs = paste("cost:", format(svmParam1$costs)[i]))
+  svmPred1 <- if(i == 1) tmp else rbind(tmp, svmPred1)
+}
+svmPred1$costs <- factor(svmPred1$costs, levels = rev(levels(svmPred1$costs)))
+@
+
+\begin{figure}
+  \begin{center}  
+<<ch07_sim_param1, echo = FALSE, fig.width=10, fig.height=10,out.width='.8\\linewidth'>>=
+library(lattice)
+library(latticeExtra)
+bookTheme()
+useOuterStrips(xyplot(y~x|costs*eps, 
+                      data = svmPred1, 
+                      panel = function(...) {
+                        panel.xyplot(sinData$x, sinData$y,
+                                     col = rgb(.2, .2, .2, .3),
+                                     pch = 16, cex = .7)
+                        panel.xyplot(...)
+                      },
+                      ylim = extendrange(sinData$y),
+                      type= "l", lwd = 2))
+@
+    \caption{The relationship between the costs values and $\epsilon$ for the simulated data. }
+    \label{F:sim_param1}
+  \end{center}
+\end{figure}
+
+Figure \ref{F:sim_param1} shows the training data and the regression curve for each model fit. Generally speaking, the regression model becomes more jagged as the cost value increases. This is due to the training process putting a cost on the residual values.  As a result, higher cost values will motivate the training process to minimize the residuals on the training set data as much as possible. This leads to models with lower bias and higher variability (i.e. the fit is likely to change if the data changes). The effect of $\epsilon$ is similar but not has potent. As  $\epsilon$ {\em decreases} the model fit begins to overfit more. This effect is smaller than the cost effect. For example, in the left--most column, the amount of overfitting is negligible. However, in the right--most column, the overfitting effect can be seen the most at the extremes of the $x$--axis where the model fit changes more radically as $\epsilon$ becomes small.
+
+Next, the effect of $\sigma$ is factored into the analysis:
+<<ch07_sim_cost_eps_sigma>>=
+set.seed(1016)
+svmParam2 <- expand.grid(eps = c(.01, 0.05, .1, .5), costs = 2^c(-2, 0, 2, 8),
+                         sigma = as.vector(sigest(y~x, data = sinData, frac = .75)))
+
+for(i in 1:nrow(svmParam2)) {
+  rbfSVM <- ksvm(x = x, y = y, data = sinData,
+                 kernel ="rbfdot", 
+                 kpar = list(sigma = svmParam2$sigma[i]),
+                 C = svmParam2$costs[i], 
+                 epsilon = svmParam2$eps[i])
+  tmp <- data.frame(x = dataGrid$x, 
+                    y = predict(rbfSVM, newdata = dataGrid),
+                    eps = paste("epsilon:", format(svmParam2$eps)[i]),
+                    costs = paste("cost:", svmParam2$costs[i]),
+                    sigma = paste("sigma:", format(svmParam2$sigma, digits = 2)[i]))
+  svmPred2 <- if(i == 1) tmp else rbind(tmp, svmPred2)
+}
+svmPred2$costs <- factor(svmPred2$costs, levels = rev(levels(svmPred2$costs)))
+svmPred2$sigma <- factor(svmPred2$sigma, levels = rev(levels(svmPred2$sigma)))
+@
+
+
+\begin{figure}
+  \begin{center}  
+<<ch07_sim_param2, echo = FALSE, fig.width=10, fig.height=10,out.width='.8\\linewidth'>>=
+library(lattice)
+library(latticeExtra)
+svmTheme <- bookTheme(set = FALSE)
+svmTheme$superpose.line$col <- c(rgb(.3, .7, .3, .7),
+                                 rgb(.9, .1, .1, .5), 
+                                 rgb(.2, .5, .7, .7))
+trellis.par.set(svmTheme)
+useOuterStrips(xyplot(y~x|costs*eps, 
+                      data = svmPred2, 
+                      groups = sigma,
+                      auto.key = list(columns = 3,
+                                      lines = TRUE,
+                                      points = FALSE),
+                      ylim = extendrange(sinData$y),
+                      type= "l", lwd = 3))
+@
+    \caption{The relationship between, $\sigma$, the costs values and $\epsilon$ for the simulated data}
+    \label{F:sim_param2}
+  \end{center}
+\end{figure}
+
+Figure \ref{F:sim_param2} shows the fitted regression curves. The effect of $\sigma$ is complex. For low to moderate cost values, $\sigma$ appears to effect the model bias. For example, in the left column (i.e. low cost) the curves are dynamic in $\sigma$; the low value tends to underfit the data, while high value tends to overfit the data. As cost increases, the low and mid value of $\sigma$ are similar, while the high value still tends to overfit.  
+
+This low-dimensional example illustrates the powerful fitting ability that SVMs have through the tuning parameters.  Clearly SVMs are prone to overfitting and must be appropriately trained/tuned to protect against overfitting to the training data. 
+
+\clearpage
+
+\section*{Exercise 2}
+
+\citeasnoun{Friedman:1991p109} introduced several benchmark datasets create by simulation. One of these simulations used the following non--linear equation to create data:
+\[
+y = 10 \sin(\pi x_1x_2) + 20 (x_3 - 0.5)^2 + 10 x_4 + 5 x_5 + N(0, \sigma^2)
+\]
+where the $x$ values are random variables uniformly distributed between [0, 1] (there are also 5 other non--informative variables also created in the simulation). The package \pkg{mlbench} contains a function called \apmfun{mlbench.friedman1} that can simulate these data:
+<<ch07_RegressionNonCovExercises2a>>=
+library(mlbench)
+set.seed(200)
+trainingData <- mlbench.friedman1(200, sd = 1)
+## We convert the 'x' data from a matrix to a data frame
+## One reason is that this will give the columns names.
+trainingData$x <- data.frame(trainingData$x)
+
+## Look at the data using
+## featurePlot(trainingData$x, trainingData$y)
+## or other methods.
+
+## This creates a list with a vector 'y' and a matrix
+## of predictors 'x'. Also simulate a large test set to
+## estimate the true error rate with good precision:
+testData <- mlbench.friedman1(5000, sd = 1)
+testData$x <- data.frame(testData$x)
+@
+
+Tune several models on these data. For example:
+<<ch07_RegressionNonCovExercisesKNN, cache=TRUE>>=
+library(caret)
+set.seed(921)
+knnModel <- train(x = trainingData$x,
+                  y = trainingData$y,
+                  method = "knn",
+                  preProc = c("center", "scale"),
+                  tuneLength = 10)
+knnModel
+knnPred <- predict(knnModel, newdata = testData$x)
+
+## The function 'postResample' can be used to get the test set
+## perforamnce values
+postResample(pred = knnPred, obs = testData$y)
+@
+Which models appear to give the best performance? Does MARS select the informative predictors (those named \apmstd{X1} -- \apmstd{X5})?
+
+\subsection*{Solutions}
+$K$-nearest neighbors models have better performance when the underlying relationship between predictors and the response relies is dependent on samples' proximity in the predictor space.  Geographic information is not part of the data generation scheme for this particular data set.  Hence, we would expect another type of model to perform better then $K$-NN.  Let's try MARS and SVM radial basis function models.
+
+<<ch07_RegressionNonCovExercisesMARS, cache=TRUE>>=
+marsGrid <- expand.grid(degree = 1:2, nprune = seq(2,14,by=2))
+set.seed(921)
+marsModel <- train(x = trainingData$x,
+                   y = trainingData$y,
+                   method = "earth",
+                   preProc = c("center", "scale"),
+                   tuneGrid = marsGrid)
+
+marsPred <- predict(marsModel, newdata = testData$x)
+
+postResample(pred = marsPred, obs = testData$y)
+@
+
+\begin{figure}
+  \begin{center}  
+<<ch07_RegressionNonCovExercisesmarsTune, echo = FALSE, fig.width=6, fig.height=4.25,out.width='.8\\linewidth'>>=
+plot(marsModel)
+@
+    \caption{The tuning parameter profile for the MARS model.}
+    \label{F:Exercise2marsTune}
+  \end{center}
+\end{figure}
+
+Figure \ref{F:Exercise2marsTune} illustrates the MARS tuning parameter profile.  The optimal model in this case uses \Sexpr{marsModel$bestTune$nprune} terms, has degree \Sexpr{marsModel$bestTune$degree}, with an RMSE of \Sexpr{round(getTrainPerf(marsModel)[1, "TrainRMSE"], 2)}$\%$.
+
+There are a few ways we can decipher which predictors were used in the final model.  One way to do this is by using the variable importance scores:
+
+<<ch07_RegressionNonCovExercisesMARSvarImp>>=
+varImp(marsModel)
+@
+
+Another way would be to generate a summary of the model which gives the exact form. We will re-create the model using the \apmfun{earth} function directly:
+
+<<ch07_RegressionNonCovExercisesMARSsummary>>=
+marsFit <- earth(x = trainingData$x,
+                 y = trainingData$y,
+                 nprune = 12, degree = 2)
+summary(marsFit)
+@
+
+Clearly, MARS only selects \apmstd{X1} -- \apmstd{X5} as important predictors in relationship to the response. Figure \ref{F:plotmo} uses the \pkg{plotmo} package to create plots of each predictor versus the outcome. 
+
+\begin{figure}[t]
+  \begin{center}  
+<<ch07_Meat_MARS_plotmo, echo = FALSE,out.width='.6\\linewidth',fig.width=6.25,fig.height=6.25>>=
+plotmo(marsFit, caption = "")
+@
+    \caption{The functional form of the MARS model for the Friedman simulation data. }
+    \label{F:plotmo}
+  \end{center}
+\end{figure}
+
+
+
+<<ch07_RegressionNonCovExercisessvmR, cache=TRUE>>=
+set.seed(921)
+svmRModel <- train(x = trainingData$x,
+                   y = trainingData$y,
+                   method = "svmRadial",
+                   preProc = c("center", "scale"),
+                   tuneLength = 8)
+
+svmRPred <- predict(svmRModel, newdata = testData$x)
+
+postResample(pred = svmRPred, obs = testData$y)
+@
+
+\begin{figure}
+  \begin{center}  
+<<ch07_RegressionNonCovExercisessvmRTune,  echo = FALSE,out.width='.6\\linewidth',fig.width=6.25,fig.height=4>>=
+plot(svmRModel, scales = list(x = list(log = 2)))
+@
+    \caption{The tuning parameter profile for the SVM radial basis function model.}
+    \label{F:Exercise2svmRTune}
+  \end{center}
+\end{figure}
+
+Figure \ref{F:Exercise2svmRTune} illustrates the radial basis function SVM tuning parameter profile.  The optimal model has a cost value of \Sexpr{svmRModel$bestTune$C}, and sigma value of \Sexpr{svmRModel$bestTune$sigma}, with an RMSE of \Sexpr{round(getTrainPerf(svmRModel)[1, "TrainRMSE"], 2)}$\%$.
+
+Overall, the MARS model performs best, with the radial basis function SVM coming in next in performance.  $K$-NN has relatively poor performance for this problem, which is not surprising since the data was not generated using neighborhood information.
+
+\clearpage
+
+
+\section*{Exercise 3}
+
+For the Tecator data described in the last chapter, build SVM, neural network, MARS and $K$--nearest neighbor models. Since neural networks are especially sensitive to highly correlated predictors, does pre--processing using PCA help the model?
+
+\subsection*{Solutions}
+
+The same data--splitting and resampling methodology from the last set of exercises was used:
+<<ch07_meat_data, cache = TRUE>>=
+library(caret)
+data(tecator)
+
+set.seed(1029)
+inMeatTraining <- createDataPartition(endpoints[, 3], p = 3/4, list= FALSE)
+
+absorpTrain <- absorp[ inMeatTraining,]
+absorpTest  <- absorp[-inMeatTraining,]
+proteinTrain <- endpoints[ inMeatTraining, 3]
+proteinTest  <- endpoints[-inMeatTraining,3]
+
+ctrl <- trainControl(method = "repeatedcv", repeats = 5)
+@
+
+A MARS model was fit to the data:
+<<ch07_meat_mars, cache = TRUE>>=
+set.seed(529)
+meatMARS <- train(x = absorpTrain, y = proteinTrain, 
+                  method = "earth", 
+                  trControl = ctrl, 
+                  tuneLength = 25)
+@
+
+\noindent Figure \ref{F:meat_MARS} shows the results.  In the end, \Sexpr{meatMARS$bestTune$nprune} terms were retained (using \Sexpr{length(predictors(meatMARS))} unique predictors) for a model with an associated RMSE of \Sexpr{round(getTrainPerf(meatMARS)[1, "TrainRMSE"], 2)}$\%$. This is worse performance than the linear models form the last set of exercises. Would bagging the MARS model help?  The bagging results are also presented in Figure \ref{F:meat_MARS}.  For this data, provides only a slight improvement over the original MARS model. 
+
+
+<<ch07_meat_bmars, cache = TRUE>>=
+set.seed(529)
+meatBMARS <- train(x = absorpTrain, y = proteinTrain, 
+                   method = "bagEarth", 
+                   trControl = ctrl, 
+                   tuneLength = 25,
+                   B = 20)
+
+plotDat <- rbind(meatMARS$results, meatBMARS$results)
+plotDat$Model <- rep(c("Basic", "Bagged"), each = nrow(meatMARS$results))
+@
+
+\begin{figure}
+  \begin{center}  
+<<ch07_Meat_MARS, echo = FALSE,out.width='.8\\linewidth',fig.width=6,fig.height=4.25>>=
+bookTheme()
+xyplot(RMSE ~ nprune, 
+       data = plotDat,
+       type = c("g", "o"),
+       groups = Model,
+       auto.key = list(columns = 2))
+@
+    \caption{Resampled RMSE values versus the number of retained terms for the basic MARS model and a bagged version. }
+    \label{F:meat_MARS}
+  \end{center}
+\end{figure}
+
+
+<<ch07_meat_lsvm, cache = TRUE>>=
+polyGrid <- expand.grid(degree = 1:2,
+                        C = 2^seq(8, 15, length = 8),
+                        scale = c(.5, .1, 0.01))
+polyGrid <- polyGrid[!(polyGrid$scale == .5 & polyGrid$degree == 2),]
+
+set.seed(529)
+meatQSVM <- train(x = absorpTrain, y = proteinTrain, 
+                  method = "svmPoly",
+                  preProcess = c("center", "scale"),
+                  trControl = ctrl, 
+                  tuneGrid = polyGrid)
+@
+
+The next model examines the performance of a polynomial kernel support vector machine tuning over the parameters of degree, cost and scale.  Figure \ref{F:meat_pSVM} illustrates the results, where the optimal model has degree \Sexpr{meatQSVM$bestTune$degree}, a cost of \Sexpr{meatQSVM$bestTune$C}, and scale of \Sexpr{meatQSVM$bestTune$scale}.  The RMSE of the optimal model is \Sexpr{round(getTrainPerf(meatQSVM)[1, "TrainRMSE"], 2)}$\%$ which is better than the MARS models.
+
+\begin{figure}
+  \begin{center}  
+<<ch07_Meat_pSVM, echo = FALSE,out.width='.9\\linewidth',fig.width=8,fig.height=4.25>>=
+bookTheme()
+plot(meatQSVM,  scales = list(x = list(log = 2)), ylim = c(.6, 2))
+@
+    \caption{The RMSE resampling profiles for linear and quadratic support vector machines.  }
+    \label{F:meat_pSVM}
+  \end{center}
+\end{figure}
+
+
+<<ch07_meat_rsvm, cache = TRUE>>=
+set.seed(529)
+meatRSVM <- train(x = absorpTrain, y = proteinTrain, 
+                  method = "svmRadial",
+                  preProcess = c("center", "scale"),
+                  trControl = ctrl, 
+                  tuneLength = 10)
+@
+
+To understand the performance of a radial basis support vector machine, we will search over 10 values of the cost parameter.  Figure \ref{F:meat_rSVM} illustrates the results, where the optimal model has a cost of \Sexpr{meatRSVM$bestTune$C}.  The RMSE of the optimal model is \Sexpr{round(getTrainPerf(meatRSVM)[1, "TrainRMSE"], 2)}$\%$ which is worse than the polynomial SVM and MARS models.
+
+\begin{figure}
+  \begin{center}  
+<<ch07_Meat_rSVM, echo = FALSE,out.width='.8\\linewidth',fig.width=7,fig.height=4.25>>=
+bookTheme()
+plot(meatRSVM,  scales = list(x = list(log = 2)))
+@
+    \caption{The relationship between the resampled RMSE values and the cost parameter for the RBF support vector machine.  }
+    \label{F:meat_rSVM}
+  \end{center}
+\end{figure}
+
+For neural networks, we will tune over several values of the size and decay tuning parameters.  In the first model, we will center and scale the predictors.  In the second model, we will pre-process the predictors by centering, scaling, and using PCA.  Figure \ref{F:meat_nnet} compares the tuning parameter profiles with and without PCA pre-processing.  Notice that the RMSE is much higher for the PCA pre-processed set, indicating that PCA does not reduce the dimension of the predictor space in a way that is helpful for predicting absorption.
+
+<<ch07_meat_nnet, cache = TRUE>>=
+set.seed(529)
+meatNet <- train(x = absorpTrain, y = proteinTrain, 
+                  method = "nnet", 
+                  trControl = ctrl,
+                  preProc = c("center", "scale"),
+                  linout = TRUE,
+                  trace = FALSE,
+                  tuneGrid = expand.grid(size = 1:9,
+                                         decay = c(0, .001, .01, .1)))
+                                         
+@                                         
+
+
+<<ch07_meat_nnet_pca, cache = TRUE>>=
+set.seed(529)
+meatPCANet <- train(x = absorpTrain, y = proteinTrain, 
+                    method = "nnet", 
+                    trControl = ctrl,
+                    preProc = c("center", "scale", "pca"),
+                    linout = TRUE,
+                    trace = FALSE,
+                    tuneGrid = expand.grid(size = 1:9,
+                                           decay = c(0, .001, .01, .1)))
+plotNNet <- rbind(meatNet$results, meatPCANet$results)
+plotNNet$Model <- rep(c("Raw", "PCA"), each = nrow(meatNet$results))
+@
+
+\begin{figure}
+  \begin{center}  
+<<ch07_Meat_nnet_plot, echo = FALSE,out.width='.9\\linewidth',fig.width=8,fig.height=4.5>>=
+bookTheme()
+print(xyplot(RMSE ~ size|Model, 
+       data = plotNNet,
+       groups = decay,
+       type = c("g", "o"),
+       auto.key = list(columns = 4, 
+                       lines = TRUE, 
+                       cex = .6,
+                       title = "Weight Decay"),
+             scales = list(y = list(relation = "free")))) 
+@
+    \caption{Neural network resampling profiles for the RMSE statistic for different pre--processing techniques: PCA signal extraction with centering and scaling versus centering and scaling alone (Raw). }
+    \label{F:meat_nnet}
+  \end{center}
+\end{figure}
+
+<<ch07_meat_knn, cache = TRUE>>=
+set.seed(529)
+meatKnn <- train(x = absorpTrain, y = proteinTrain, 
+                 method = "knn", 
+                 trControl = ctrl,
+                 preProc = c("center", "scale"),
+                 tuneGrid = data.frame(.k = seq(1, 20, by = 2)))                   
+@                                         
+
+<<ch07_meat_knn_pca, cache = TRUE>>=
+set.seed(529)
+meatPCAKnn <- train(x = absorpTrain, y = proteinTrain, 
+                    method = "knn", 
+                    trControl = ctrl,
+                    preProc = c("center", "scale", "pca"),
+                    tuneGrid = data.frame(k = seq(1, 20, by = 2)))
+
+plotKnn <- rbind(meatKnn$results, meatPCAKnn$results)
+plotKnn$Model <- rep(c("Raw", "PCA"), each = nrow(meatKnn$results))
+@
+
+Last, a $K$-nearest neighbors model is built over several values of $k$ where the predictors are pre-processed using centering and scaling, and are also pre-processed using centering, scaling, and PCA (Figure \ref{F:meat_knn}).  Like neural networks, PCA does not provide useful dimension reduction for predicting the absorption response.  Instead, it is better to pre-process by centering and scaling.  Overall, the $K$-NN model performs the worst where RMSE of the optimal model is \Sexpr{round(getTrainPerf(meatKnn)[1, "TrainRMSE"], 2)}$\%$.
+
+
+\begin{figure}
+  \begin{center}  
+<<ch07_Meat_knn_plot, echo = FALSE,out.width='.8\\linewidth',fig.width=7,fig.height=4.25>>=
+bookTheme()
+xyplot(RMSE ~ k, 
+       data = plotKnn,
+       groups = Model,
+       type = c("g", "o"),
+       auto.key = list(columns = 2, 
+                       lines = TRUE, 
+                       cex = .6,
+                       title = "#Neighbors")) 
+@
+    \caption{The resampling RMSE profile of the $K$--nearest neighbors models (with and without PCA pre--processing).    }
+    \label{F:meat_knn}
+  \end{center}
+\end{figure}
+
+
+<<ch07_save, results='hide', echo = FALSE>>=
+save(meatNet, file = "meatNet.RData")
+@
+
+<<ch07_meat_summary, cache = TRUE>>=
+load("meatPLS.RData")
+meatResamples <- resamples(list(PLS = meatPLS,
+                                MARS = meatBMARS,
+                                SVMlin = meatQSVM,
+                                SVMrad = meatRSVM,
+                                NNet = meatNet,
+                                KNN = meatKnn))
+@
+
+To compare models, the resampling distributions are presented in Figure \ref{F:meatCompare07}.  For this data, neural networks (centering and scaling, only) and partial least squares (also centering and scaling) have the lowest overall RMSE.
+
+\begin{figure}[t!]
+  \begin{center}  
+<<ch07_meat_compare_plot, echo = FALSE, fig.width=7, fig.height=5,out.width='.8\\linewidth'>>=
+bwplot(meatResamples, metric = "RMSE")
+@
+    \caption{Resampling distributions of the RMSE statistic for the models fit in this document as well as the best form the linear models (i.e. PLS).  }
+    \label{F:meatCompare07}
+  \end{center}
+\end{figure}
+
+\clearpage
+
+\section*{Exercise 4}
+
+Return to the permeability problem outlined in Exercise 6.2.  Train several non--linear regression models and evaluate the resampling and test set performance.
+ \begin{itemize}
+  \item[] (a) Which non--linear regression model gives the optimal resampling and test set performance?
+  \item[] (b) Do any of the non--linear models outperform the optimal linear model you previously developed in Exercise 6.2?  If so, what might this tell you about the underlying relationship between the predictors and the response?
+  \item[] (c) Would you recommend any of the models you have developed to replace the permeability laboratory experiment?
+\end{itemize}
+
+\subsection*{Solutions}
+
+In order to make a parallel comparison to the results in Exercise 6.2, we need to perform the same pre-precessing steps and set up the identical validation approach.  The following syntax provides the same pre-processing, data partition into training and testing sets, and validation set-up.
+
+
+<<ch07_perm_load, echo=TRUE, eval=TRUE>>=
+library(AppliedPredictiveModeling)
+data(permeability)
+
+#Identify and remove NZV predictors
+nzvFingerprints = nearZeroVar(fingerprints)
+noNzvFingerprints <- fingerprints[,-nzvFingerprints]
+
+#Split data into training and test sets
+set.seed(614)
+trainingRows <- createDataPartition(permeability, 
+                                    p = 0.75, 
+                                    list = FALSE)
+
+trainFingerprints <- noNzvFingerprints[trainingRows,]
+trainPermeability <- permeability[trainingRows,]
+
+testFingerprints <- noNzvFingerprints[-trainingRows,]
+testPermeability <- permeability[-trainingRows,]
+
+set.seed(614)
+ctrl <- trainControl(method = "LGOCV")
+@
+
+Next, we will find optimal tuning parameters for MARS, SVM (radial basis function), and K-NN models.
+
+<<ch07_permeabilityModelTune, echo = TRUE, eval = TRUE, cache = TRUE>>=
+set.seed(614)
+
+marsPermGrid <- expand.grid(degree = 1:2, nprune = seq(2,14,by=2))
+marsPermTune <- train(x = trainFingerprints, y = log10(trainPermeability),
+                      method = "earth",
+                      tuneGrid = marsPermGrid,
+                      trControl = ctrl)
+
+
+RSVMPermGrid <- expand.grid(sigma = c(0.0005,0.001,0.0015),
+                            C = seq(1,49,by=6))
+RSVMPermTune <- train(x = trainFingerprints, y = log10(trainPermeability),
+                      method = "svmRadial",
+                      trControl = ctrl, 
+                      tuneGrid = RSVMPermGrid)
+
+knnPermTune <- train(x = trainFingerprints, y = log10(trainPermeability),
+                     method = "knn",
+                     tuneLength = 10)
+@
+
+Figure \ref{F:permeabilityMARSTunePlot} indicates that the optimal degree and number of terms that maximize $R^2$ are \Sexpr{marsPermTune$results$degree[best(marsPermTune$results, "Rsquared", maximize = TRUE)]} and \Sexpr{marsPermTune$results$nprune[best(marsPermTune$results, "Rsquared", maximize = TRUE)]}, respectively, with an $R^2$ of \Sexpr{round(marsPermTune$results$Rsquared[best(marsPermTune$results, "Rsquared", maximize = TRUE)],2)}.
+
+\begin{figure}[ht]
+  \begin{center}  
+<<ch07_permeabilityMARSTunePlot, echo = FALSE, results='hide', fig.width=7, fig.height=4.5,out.width='.8\\linewidth'>>=
+plotTheme <- bookTheme()
+trellis.par.set(plotTheme)
+plot(marsPermTune,metric="Rsquared")
+@
+  \caption{MARS tuning parameter profile for the permeability data}
+\label{F:permeabilityMARSTunePlot}
+\end{center}
+\end{figure}
+
+
+Figure \ref{F:permeabilityRSVMTunePlot} indicates that the optimal cost and sigma that maximize $R^2$ are \Sexpr{RSVMPermTune$results$C[best(RSVMPermTune$results, "Rsquared", maximize = TRUE)]} and \Sexpr{RSVMPermTune$results$sigma[best(RSVMPermTune$results, "Rsquared", maximize = TRUE)]}, respectively, with an $R^2$ of \Sexpr{round(RSVMPermTune$results$Rsquared[best(RSVMPermTune$results, "Rsquared", maximize = TRUE)],2)}.
+
+\begin{figure}[ht]
+  \begin{center}  
+<<ch07_permeabilityRSVMTunePlot, echo = FALSE, results='hide', fig.width=7, fig.height=4.5,out.width='.8\\linewidth'>>=
+plotTheme <- bookTheme()
+trellis.par.set(plotTheme)
+plot(RSVMPermTune,metric="Rsquared", scales = list(x = list(log = 2)))
+@
+  \caption{Radial basis function SVM tuning parameter profile for the permeability data}
+\label{F:permeabilityRSVMTunePlot}
+\end{center}
+\end{figure}
+
+
+Figure \ref{F:permeabilityKNNTunePlot} indicates that the optimal number of nearest neighbors that maximize $R^2$ are \Sexpr{knnPermTune$results$k[best(knnPermTune$results, "Rsquared", maximize = TRUE)]}, respectively, with an $R^2$ of \Sexpr{round(knnPermTune$results$Rsquared[best(knnPermTune$results, "Rsquared", maximize = TRUE)],2)}.
+
+\begin{figure}[ht]
+  \begin{center}  
+<<ch07_permeabilityKNNTunePlot, echo = FALSE, results='hide', fig.width=7, fig.height=4.5,out.width='.8\\linewidth'>>=
+plotTheme <- bookTheme()
+trellis.par.set(plotTheme)
+plot(knnPermTune,metric="Rsquared")
+@
+  \caption{K-nearest neighbors tuning parameter profile for the permeability data}
+\label{F:permeabilityKNNTunePlot}
+\end{center}
+\end{figure}
+
+For these three non-linear models, the radial basis function SVM model performs best with a leave-group out cross-validated $R^2$ value of \Sexpr{round(RSVMPermTune$results$Rsquared[best(RSVMPermTune$results, "Rsquared", maximize = TRUE)],2)}.  This is worse than the elastic net model tuned in Exercise 6.2 which had a leave-group out cross-validated $R^2$ value of 0.58.  These results indicate that the underlying relationship between the predictors and the response is likely best described by a linear structure in a reduced dimension of the original space.
+
+For the models tuned thus far, we would recommend the elastic net model.
+
+\clearpage
+
+\section*{Exercise 5}
+
+Exercise 6.3 describes data for a chemical manufacturing process.  Use the same data imputation, data--splitting and pre--processing steps as before and train several non--linear regression models.
+\begin{itemize}
+  \item[] (a) Which non--linear regression model gives the optimal resampling and test set performance?
+  \item[] (b) Which predictors are most important in the optimal non--linear regression model?  Do either the biological or process variables dominate the list?  How do the top 10 important predictors compare to the top 10 predictors from the optimal linear model?
+  \item[] (c) Explore the relationships between the top predictors and the response for the predictors that are unique to the optimal non--linear regression model.  Do these plots reveal intuition about the biological or process predictors and their relationship with yield?
+\end{itemize}
+
+\subsection*{Solutions}
+
+<<ch07_chem_load>>=
+library(AppliedPredictiveModeling)
+data(ChemicalManufacturingProcess)
+
+predictors <- subset(ChemicalManufacturingProcess,select= -Yield)
+yield <- subset(ChemicalManufacturingProcess,select="Yield")
+
+set.seed(517)
+trainingRows <- createDataPartition(yield$Yield, 
+                                    p = 0.7, 
+                                    list = FALSE)
+
+trainPredictors <- predictors[trainingRows,]
+trainYield <- yield[trainingRows,]
+
+testPredictors <- predictors[-trainingRows,]
+testYield <- yield[-trainingRows,]
+
+#Pre-process trainPredictors and apply to trainPredictors and testPredictors
+pp <- preProcess(trainPredictors,method=c("BoxCox","center","scale","knnImpute"))
+ppTrainPredictors <- predict(pp,trainPredictors)
+ppTestPredictors <- predict(pp,testPredictors)
+
+#Identify and remove NZV
+nzvpp = nearZeroVar(ppTrainPredictors)
+ppTrainPredictors <- ppTrainPredictors[-nzvpp]
+ppTestPredictors <- ppTestPredictors[-nzvpp]
+
+#Identify and remove highly correlated predictors
+predcorr = cor(ppTrainPredictors)
+highCorrpp <- findCorrelation(predcorr)
+ppTrainPredictors <- ppTrainPredictors[, -highCorrpp]
+ppTestPredictors <- ppTestPredictors[, -highCorrpp]
+
+#Set-up trainControl
+set.seed(517)
+ctrl <- trainControl(method = "boot", number = 25)
+@
+
+For this example, we will tune a MARS and SVM (polynomial kernel function) model
+
+<<ch07_chemModelTune, echo = TRUE, eval = TRUE, cache = TRUE>>=
+set.seed(614)
+
+marsChemGrid <- expand.grid(degree = c(1:2), nprune = c(2:10))
+marsChemTune <- train(x = ppTrainPredictors, y = trainYield,
+                      method = "earth",
+                      tuneGrid = marsChemGrid,
+                      trControl = ctrl)
+
+psvmTuneGrid <- expand.grid(C=c(0.01,0.05,0.1), degree=c(1,2), scale=c(0.25,0.5,1))
+PSVMChemTune <- train(x = ppTrainPredictors, y = trainYield,
+                      method = "svmPoly",
+                      trControl = ctrl, 
+                      tuneGrid = psvmTuneGrid)
+@
+
+Figure \ref{F:chemMARSTunePlot} indicates that the optimal degree and number of terms that maximize $R^2$ are \Sexpr{marsChemTune$results$degree[best(marsChemTune$results, "Rsquared", maximize = TRUE)]} and \Sexpr{marsChemTune$results$nprune[best(marsChemTune$results, "Rsquared", maximize = TRUE)]}, respectively, with an $R^2$ of \Sexpr{round(marsChemTune$results$Rsquared[best(marsChemTune$results, "Rsquared", maximize = TRUE)],2)}.  Hence, MARS identifies a fairly simple model with the terms listed in Table \ref{T:chemMARSSummary}.
+
+\begin{figure}[ht]
+  \begin{center}  
+<<ch07_chemMARSTunePlot, echo = FALSE, results='hide', fig.width=7, fig.height=4.5,out.width='.8\\linewidth'>>=
+plotTheme <- bookTheme()
+trellis.par.set(plotTheme)
+plot(marsChemTune,metric="Rsquared")
+@
+  \caption{MARS tuning parameter profile for the chemical manufacturing data.}
+\label{F:chemMARSTunePlot}
+\end{center}
+\end{figure}
+
+
+\begin{figure}[h]
+\begin{center}
+<<ch07_chemTest, echo = FALSE, results='hide', fig.width=5, fig.height=5,out.width='0.6\\linewidth'>>=
+marsTest <- data.frame(Observed=testYield,Predicted=predict(marsChemTune,ppTestPredictors))
+scatterTheme <- caretTheme()
+
+scatterTheme$plot.line$col <- c("blue")
+scatterTheme$plot.line$lwd <- 2
+
+scatterTheme$plot.symbol$col <- rgb(0, 0, 0, .3)
+scatterTheme$plot.symbol$cex <- 0.8
+scatterTheme$plot.symbol$pch <- 16
+
+scatterTheme$add.text <- list(cex = 0.6)
+
+trellis.par.set(scatterTheme)
+xyplot(Predicted ~ Observed,
+       marsTest,
+       panel = function(...) {
+         theDots <- list(...)
+         panel.xyplot(..., type = c("p", "g","r","smooth"))
+         corr <- round(cor(theDots$x, theDots$y), 2)
+         panel.text(44,
+                    min(theDots$y),
+                    paste("corr:", corr))
+       },
+       ylab = "Predicted",
+       xlab = "Observed")
+@
+\caption[mars manufacturing test]{MARS predictions for the test set for the chemical manufacturing data.}
+\label{F:MARSTestPreds}
+\end{center}
+\end{figure}
+
+The test set predictions for the MARS model are presented in Figure \ref{F:MARSTestPreds}, with an $R^2$ value of \Sexpr{round(cor(marsTest$Observed,marsTest$Predicted)^2, 3)}.
+
+<<ch07_chemMARSSummary, echo=FALSE, results="asis">>=
+marsSummary <- summary(marsChemTune$finalModel)
+
+xtable(marsSummary$coefficients, 
+       digits=c(0,2),
+       align=c("l|r"),
+       label = "T:chemMARSSummary",
+       caption = "MARS coefficients for chemical manufacturing data.")
+@
+
+
+The final MARS model has slightly worse cross-validation and test set performance than the optimal PLS model (see solutions for Exercise 6.3).  This would indicate that the underlying structure between the predictors and the response is approximately linear.  We can use marginal plots of each predictor in the model to better understand the relationship that the MARS model has detected.  Figure \ref{F:chemMARSMarginalPlot} displays the marginal relationships between the predictors identified by the model and the predicted response.  Based on this figure, the underlying relationships are approximately linear in this model.
+
+\begin{figure}[ht]
+  \begin{center}  
+<<ch07_chemMARSMarginalPlot, echo = FALSE, results='hide', fig.width=7, fig.height=4.5,out.width='.8\\linewidth'>>=
+marsImp <- varImp(marsChemTune)
+impOrder <- order(marsImp$importance$Overall, decreasing=TRUE)
+impVars <- rownames(marsImp$importance)[impOrder]
+top2 <- impVars[1:2]
+
+gridfcn <- function(x, data, topPreds, size=2) {
+  grid <- NULL
+  mns <- matrix(colMeans(data[,topPreds]), nrow = 1)
+  mns <- apply(mns, 2, function(x, n) rep(x, n), n = size)
+  colnames(mns) <- topPreds
+  mns <- as.data.frame(mns)
+  grid <- vector(mode = "list", length = length(topPreds))
+  for(i in seq(along = topPreds)){
+    tmp <- mns
+    tmp[,i] <- seq(min(data[,topPreds[i]]), max(data[,topPreds[i]]), length = size)
+    grid[[i]] <- data.frame(pred = predict(x, tmp),
+                            var = topPreds[i],
+                            x = tmp[,i])
+  }
+  grid <- do.call("rbind", grid)
+  colnames(grid) <- c("pred","var","x")
+  grid
+}
+
+mg <- gridfcn(marsChemTune$finalModel, ppTrainPredictors, topPreds=top2)
+
+plotTheme <- bookTheme()
+trellis.par.set(plotTheme)
+xyplot(pred ~ x|var, data=mg,
+       scales = list(x=list(relation="free"), y=list(alternating=0)),
+       type = c("g","l"),
+       as.table = TRUE,
+       xlab = "",
+       ylab = "Predicted Outcome",
+       between = list(x=1,y=1))
+@
+  \caption{MARS marginal plots for chemical manufacturing data.}
+\label{F:chemMARSMarginalPlot}
+\end{center}
+\end{figure}
+
+Referring back to Figure 15 of the solutions from Chapter 6, the top two PLS predictors are ManufacturingProcess32 and ManufacturingProcess09, which are the same as what the MARS model identifies.  PLS, however, identifies additional predictive information from the other predictors that improve the predictive ability of the models.  Overall, many of the manufacturing process predictors are at the top of the importance list.
+
+Figure \ref{F:chemPSVMTunePlot} indicates that the optimal degree, cost, and scale that maximize $R^2$ are \Sexpr{PSVMChemTune$results$degree[best(PSVMChemTune$results, "Rsquared", maximize = TRUE)]}, \Sexpr{PSVMChemTune$results$C[best(PSVMChemTune$results, "Rsquared", maximize = TRUE)]}, and \Sexpr{PSVMChemTune$results$scale[best(PSVMChemTune$results, "Rsquared", maximize = TRUE)]}, respectively, with an $R^2$ of \Sexpr{round(PSVMChemTune$results$Rsquared[best(PSVMChemTune$results, "Rsquared", maximize = TRUE)],2)}.
+
+\begin{figure}[ht]
+  \begin{center}  
+<<ch07_chemPSVMTunePlot, echo = FALSE, results='hide', fig.width=7, fig.height=4.5,out.width='.8\\linewidth'>>=
+plotTheme <- bookTheme()
+trellis.par.set(plotTheme)
+plot(PSVMChemTune,metric="Rsquared")
+@
+  \caption{Polynomial SVM tuning parameter profile for the chemical manufacturing data.}
+\label{F:chemPSVMTunePlot}
+\end{center}
+\end{figure}
+
+The polynomial SVM tuning parameters both indicate that a linear model is sufficient for this model.  Specifically, a degree of 1 is an indicator of linear structure, and a low cost is also an indicator of linear structure.
+
+
+
+\clearpage
+
+\section*{Session Info}
+
+<<ch07_session, echo = FALSE, results='asis'>>=
+toLatex(sessionInfo())
+@
+
+
+\bibliographystyle{ECA_jasa}
+\bibliography{Ch_07_Ex_sol}
+
+\end{document}
+
+
+
+ 
