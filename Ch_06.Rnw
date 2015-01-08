@@ -78,7 +78,8 @@ library(pls)
 library(AppliedPredictiveModeling)
 library(doMC)
 library(xtable)
-registerDoMC(8)
+library(parallel)
+registerDoMC(detectCores(logical = FALSE) - 1)
 
 options(width = 105)
 textList <- function (x, period = FALSE, last = " and ")
@@ -238,7 +239,7 @@ meatLm <- train(x = absorpTrain, y = proteinTrain, method = "lm", trControl = ct
 meatLm
 @
 
-The RMSE is slightly more than 1$\%$. However, it is a fair to assume that the amount of multicolinearity in the predictors is probably degrading performance. For this reason, PCR and PLS models are also trained:
+The RMSE is slightly more than \Sexpr{I(round(getTrainPerf(meatLm)[1, "TrainRMSE"], 1))}$\%$. However, it is a fair to assume that the amount of multicolinearity in the predictors is probably degrading performance. For this reason, PCR and PLS models are also trained:
 
 <<ch06_meat_pcr, cache = TRUE>>=
 set.seed(529)
@@ -260,9 +261,9 @@ comps$Model <- rep(c("PLS", "PCR"), each = 25)
 
 The results are shown in Figure \ref{F:meat_pls}. Both models achieve comparable error rates but the PLS model requires fewer (\Sexpr{meatPLS$bestTune$ncomp}) components. The RMSE for the PLS model was estimated to be \Sexpr{round(getTrainPerf(meatPLS)[1, "TrainRMSE"], 2)}$\%$. 
 
-\begin{figure}
+\begin{figure}[t]
   \begin{center}  
-<<ch06_meat_pls_plot, echo = FALSE, fig.width=7, fig.height=4.5,out.width='.8\\linewidth'>>=
+<<ch06_meat_pls_plot, echo = FALSE, fig.width=7, fig.height=4.5,out.width='.7\\linewidth'>>=
 bookTheme()
 xyplot(RMSE ~ ncomp, data = comps, 
        groups = Model, type = c("g", "o"), 
@@ -291,7 +292,7 @@ The final model used $\lambda = \Sexpr{meatENet$bestTune$lambda}$ and a fraction
 \begin{figure}[t]
 
   \begin{center}  
-<<ch06_meat_enet_plot, echo = FALSE, fig.width=7, fig.height=4.5,out.width='.8\\linewidth'>>=
+<<ch06_meat_enet_plot, echo = FALSE, fig.width=7, fig.height=4.5,out.width='.9\\linewidth'>>=
 bookTheme()
 plot(meatENet, plotType = "level")
 @
@@ -330,7 +331,7 @@ data(permeability)
 
 \subsection*{Solutions}
 
-Before pre-processing and modeling the data, let's examine the distribution of the permeability response (left-hand plot in Figure \ref{F:permeabilityDistribution}).  Clearly the distribution is not symmetric, but is skewed-to-the-right.  When the response has this kind of distribution, an appropriate next step is to log-transform the data.  We then should verify if the transformation induced a symmetric distribution (right-hand plot in Figure \ref{F:permeabilityDistribution}).  For this data, the log-transformation did induce an approximately symmetric distribution.  For this problem, we will model the log-transformed response.
+Before pre-processing and modeling the data, let's examine the distribution of the permeability response (left-hand plot in Figure \ref{F:permeabilityDistribution}).  Clearly the distribution is not symmetric, but is skewed-to-the-right.  When the response has this kind of distribution, an appropriate next step is to log-transform the data.  We then should verify if the transformation induced a symmetric distribution (right-hand plot in Figure \ref{F:permeabilityDistribution}).  For these data, the log-transformation did induce an approximately symmetric distribution and we will model the log-transformed response.
 
 \begin{figure}[t]
   \begin{center}  
@@ -351,7 +352,7 @@ Next, let's pre-process the fingerprint predictors to determine how many predict
 
 <<ch06_perm_nzv, echo = TRUE, eval = TRUE>>=
 #Identify and remove NZV predictors
-nzvFingerprints = nearZeroVar(fingerprints)
+nzvFingerprints <- nearZeroVar(fingerprints)
 noNzvFingerprints <- fingerprints[,-nzvFingerprints]
 @
 
@@ -385,9 +386,9 @@ plsTune <- train(x = trainFingerprints, y = log10(trainPermeability),
 
 Figure \ref{F:permeabilityPLSTunePlot} indicates that the optimal number of latent variables that maximizes $R^2$ is \Sexpr{best(plsTune$results, "Rsquared", maximize = TRUE)}.
 
-\begin{figure}[ht]
+\begin{figure}[t]
   \begin{center}  
-<<ch06_permeabilityPLSTunePlot, , echo = FALSE, results='hide', fig.width=7, fig.height=4.5,out.width='.8\\linewidth'>>=
+<<ch06_permeabilityPLSTunePlot, echo = FALSE, results='hide', fig.width=7, fig.height=4.5,out.width='.7\\linewidth'>>=
 plotTheme <- bookTheme()
 trellis.par.set(plotTheme)
 plot(plsTune,metric="Rsquared")
@@ -403,7 +404,7 @@ The relationship between the PLS components and the response can be seen in Figu
 
 \begin{figure}[ht]
 \begin{center}
-<<ch06_permeabilityPLSCompPlot, echo = FALSE, results='hide', fig.width=8, fig.height=4,out.width='1\\linewidth'>>=
+<<ch06_permeabilityPLSCompPlot, echo = FALSE, results='hide', fig.width=8, fig.height=4,out.width='.8\\linewidth'>>=
 library(reshape2)  
 plsDat <- data.frame(unclass(scores(plsTune$finalModel)))
 names(plsDat) <- paste("PLS", names(plsDat), sep = ".")
@@ -438,7 +439,8 @@ xyplot(log10(y) ~ value|Label,
          corr <- round(cor(theDots$x, theDots$y), 2)
          panel.text(4,
                     min(theDots$y),
-                    paste("corr:", corr))
+                    paste("corr:", corr),
+                    cex = 1.5)
        },
        layout = c(3,1),
        as.table = TRUE,
@@ -487,8 +489,9 @@ xyplot(Predicted ~ Observed,
 Next we will predict the response for the test set and compare the $R^2$ value with the one obtained through leave-group-out cross-validation.  The relationship is displayed in Figure \ref{F:permeabilityPLSTestPreds}, where the $R^2$ value is \Sexpr{round(cor(plsTest$Observed,plsTest$Predicted)^2, 3)}.  Leave-group-out cross-validation estimated that the PLS model would have an $R^2$ value of \Sexpr{round(plsTune$results[best(plsTune$results, "Rsquared", maximize = TRUE), "Rsquared"],3)}.  These values are close, indicating that the leave-group-out cross-validation performance is a good indicator of the performance from a true hold-out set.
 
 <<ch06_permeabilityOtherTune, echo = FALSE, eval = TRUE, cache=TRUE, warning=FALSE>>=
-set.seed(614)
 ctrl <- trainControl(method = "LGOCV")
+
+set.seed(614)
 ridgeGrid <- data.frame(lambda = seq(0.02, .35, length = 9))
 ridgeTune <- train(x = trainFingerprints, y = log10(trainPermeability),
                    method = "ridge",
@@ -497,17 +500,18 @@ ridgeTune <- train(x = trainFingerprints, y = log10(trainPermeability),
 
 enetGrid <- expand.grid(lambda = c(0, 0.05, .1),
                         fraction = seq(.05, 1, length = 25))
+set.seed(614)
 enetTune <- train(x = trainFingerprints, y = log10(trainPermeability),
                   method = "enet",
                   tuneGrid = enetGrid,
                   trControl = ctrl)
 @
 
-In addition to a PLS model, ridge regression and elastic net models were tuned.  The tuning parameter profiles can be seen in Figures \ref{F:permeabilityRidgeTunePlot} and \ref{F:permeabilityEnetTunePlot}.  For ridge regression, the optimal $R^2$ value is \Sexpr{round(ridgeTune$results[best(ridgeTune$results, "Rsquared", maximize = TRUE), "Rsquared"],3)}, which is obtained at a weight decay value of \Sexpr{ridgeTune$bestTune}.  This shrinkage parameter value is relatively high and drives the coefficients more rapidly towards zero. For the elastic net, the optimal $R^2$ value is \Sexpr{round(enetTune$results[best(enetTune$results, "Rsquared", maximize = TRUE), "Rsquared"],3)}, which is obtained with the fraction of the full solution set at \Sexpr{enetTune$bestTune$fraction} and a weight decay of \Sexpr{enetTune$bestTune$lambda}.  Therefore, the fraction parameter lessens the weight decay, relative to ridge regression.  Clearly, the elastic net solution the best penalized model choice for this problem.
+In addition to a PLS model, ridge regression and elastic net models were tuned.  The tuning parameter profiles can be seen in Figures \ref{F:permeabilityRidgeTunePlot} and \ref{F:permeabilityEnetTunePlot}.  For ridge regression, the optimal $R^2$ value is \Sexpr{round(ridgeTune$results[best(ridgeTune$results, "Rsquared", maximize = TRUE), "Rsquared"],3)}, which is obtained at a weight decay value of \Sexpr{ridgeTune$bestTune}.  This shrinkage parameter value is relatively high and drives the coefficients more rapidly towards zero. For the elastic net, the optimal $R^2$ value is \Sexpr{round(enetTune$results[best(enetTune$results, "Rsquared", maximize = TRUE), "Rsquared"],3)}, which is obtained with the fraction of the full solution set at \Sexpr{enetTune$bestTune$fraction} (corresponding to \Sexpr{I(length(predictors(enetTune)))} predictors) and a weight decay of \Sexpr{enetTune$bestTune$lambda}.  Therefore, the fraction parameter lessens the weight decay, relative to ridge regression.  Clearly, the elastic net solution the best penalized model choice for this problem.
 
 \begin{figure}[ht]
   \begin{center}  
-<<ch06_permeabilityRidgeTunePlot, echo = FALSE, results='hide', fig.width=5, fig.height=5,out.width='.5\\linewidth'>>=
+<<ch06_permeabilityRidgeTunePlot, echo = FALSE, results='hide', fig.width=7, fig.height=4.5,out.width='.7\\linewidth'>>=
 plotTheme <- bookTheme()
 #plotTheme$fontsize$text <- 10
 trellis.par.set(plotTheme)
@@ -565,7 +569,7 @@ Then let's understand some fundamental characteristics of the response and predi
 
 \begin{figure}[t]
   \begin{center}  
-  <<ch06_yieldDistribution, echo = FALSE, fig.width=7, fig.height=4.5,out.width='.8\\linewidth'>>=
+  <<ch06_yieldDistribution, echo = FALSE, fig.width=7, fig.height=4.5,out.width='.6\\linewidth'>>=
 plotTheme <- bookTheme()
 trellis.par.set(plotTheme)
 histogram(~Yield, data=ChemicalManufacturingProcess, xlab="Yield")
@@ -632,7 +636,7 @@ Next, we should remove near-zero variance and highly correlated predictors.
 
 <<ch06_filterPredictors, echo = TRUE, eval = TRUE>>=
 #Identify and remove NZV
-nzvpp = nearZeroVar(ppTrainPredictors)
+nzvpp <- nearZeroVar(ppTrainPredictors)
 ppTrainPredictors <- ppTrainPredictors[-nzvpp]
 ppTestPredictors <- ppTestPredictors[-nzvpp]
 
@@ -661,7 +665,7 @@ Figure \ref{F:cmPLSTunePlot} indicates that the optimal number of latent variabl
 
 \begin{figure}[h]
 \begin{center}  
-<<ch06_ex3PLSTune, echo = FALSE, fig.width=7, fig.height=4.5,out.width='.8\\linewidth'>>=
+<<ch06_ex3PLSTune, echo = FALSE, fig.width=7, fig.height=4.5,out.width='.6\\linewidth'>>=
 plotTheme <- bookTheme()
 trellis.par.set(plotTheme)
 plot(plsTune,metric="Rsquared")
