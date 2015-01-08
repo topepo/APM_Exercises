@@ -1,0 +1,825 @@
+
+\documentclass[12pt]{article}
+
+\usepackage{amsmath}
+\usepackage{graphicx}
+\usepackage{color}
+\usepackage{xspace}
+\usepackage{fancyvrb}
+\usepackage[
+         colorlinks=true,
+         linkcolor=blue,
+         citecolor=blue,
+         urlcolor=blue]
+         {hyperref}
+         
+\usepackage[default]{jasa_harvard}   
+%\usepackage{JASA_manu}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\setlength{\oddsidemargin}{-.25 truein}
+\setlength{\evensidemargin}{0truein}
+\setlength{\topmargin}{-0.2truein}
+\setlength{\textwidth}{7 truein}
+\setlength{\textheight}{8.5 truein}
+\setlength{\parindent}{0truein}
+\setlength{\parskip}{0.07truein}
+
+\definecolor{darkred}{rgb}{0.6,0.0,0}
+\definecolor{darkblue}{rgb}{.165, 0, .659}
+\definecolor{grey}{rgb}{0.85,0.85,0.85}
+\definecolor{darkorange}{rgb}{1,0.54,0}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+\newcommand{\bld}[1]{\mbox{\boldmath $#1$}}
+\newcommand{\shell}[1]{\mbox{$#1$}}
+\renewcommand{\vec}[1]{\mbox{\bf {#1}}}
+
+\newcommand{\ReallySmallSpacing}{\renewcommand{\baselinestretch}{.6}\Large\normalsize}
+\newcommand{\SmallSpacing}{\renewcommand{\baselinestretch}{1.1}\Large\normalsize}
+
+\newcommand{\halfs}{\frac{1}{2}}
+
+\DefineVerbatimEnvironment{Sinput}{Verbatim}{fontshape=sl,formatcom=\color{darkblue}}
+\fvset{fontsize=\footnotesize}
+
+\newcommand{\website}[1]{{\textsf{#1}}}
+\newcommand{\code}[1]{\mbox{\footnotesize\color{darkblue}\texttt{#1}}}
+\newcommand{\pkg}[1]{{\fontseries{b}\selectfont #1}}
+\renewcommand{\pkg}[1]{{\textsf{#1}}}
+\newcommand{\todo}[1]{TODO: {\bf \textcolor{darkred}{#1}}}
+\newcommand{\Dag}{$^\dagger$}
+\newcommand{\Ast}{$^\ast$}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\begin{document}
+
+<<startup,echo=FALSE>>=
+opts_chunk$set(tidy=FALSE,message=FALSE,size='footnotesize',
+               background = 'white',comment=NA, digits = 3,
+               prompt = TRUE)
+knit_theme$set("bclear")
+@
+
+\title{ Exercises for  \\ {\it Applied Predictive Modeling} \\ Chapter 6 --- Linear Regression and Its Cousins}
+\author{Max Kuhn, Kjell Johnson}
+\date{Version 1\\ \today}
+
+\maketitle
+
+<<ch06_startup, echo = FALSE, results='hide'>>=
+library(caret)
+library(pls)
+library(AppliedPredictiveModeling)
+library(doMC)
+library(xtable)
+registerDoMC(8)
+
+options(width = 105)
+textList <- function (x, period = FALSE, last = " and ")
+{
+    if (!is.character(x))
+        x <- as.character(x)
+    numElements <- length(x)
+    out <- if (length(x) > 0) {
+        switch(min(numElements, 3), x, paste(x, collapse = last),
+            {
+                x <- paste(x, c(rep(",", numElements - 2), last,
+                  ""), sep = "")
+                paste(x, collapse = " ")
+            })
+    }
+    else ""
+    if (period)
+        out <- paste(out, ".", sep = "")
+    out
+}
+
+hook_inline = knit_hooks$get('inline')
+knit_hooks$set(inline = function(x) {
+  if (is.character(x)) highr::hi_latex(x) else hook_inline(x)
+})
+
+options(width = 80)
+@
+
+\newcommand{\apmfun}[1]{{\tt \small \hlkwd{#1}}}
+\newcommand{\apmarg}[1]{{\tt \small \hlkwc{#1}}}
+\newcommand{\apmstr}[1]{{\tt \small \hlstr{#1}}}
+\newcommand{\apmnum}[1]{{\tt \small \hlnum{#1}}}
+\newcommand{\apmstd}[1]{{\tt \small \hlstd{#1}}}
+\newcommand{\apmred}[1]{\textcolor[rgb]{0.8,0.0,0}{#1}}%
+
+\maketitle
+
+\thispagestyle{empty}
+      
+The solutions in this file uses several \pkg{R} packages not used in the text. To install all of the packages needed for this document, use:
+
+<<ch06_install, eval = FALSE>>=
+install.packages(c("AppliedPredictiveModeling", "caret", "elasticnet", "pls", 
+                   "RColorBrewer", "reshape2"))
+@
+  
+  
+\section*{Exercise 1}
+
+Infrared (IR) spectroscopy technology can be used to determine the chemical makeup of a substance.  The theory of IR spectroscopy holds that unique molecular structures absorb IR frequencies differently.  In practice a spectrometer fires a series of IR frequencies into a sample material, and the device measures the absorbance of the sample at each individual frequency.  This series of measurements creates a spectrum profile which can then be used to determine the chemical make--up of the sample material.
+
+A Tecator Infratec Food and Feed Analyzer instrument was used to analyze 215 samples of meat across 100 frequencies.  A sample of these frequency profiles are displayed in Figure \ref{F:RegressionTecatorSpectrum}.  In addition an IR profile, analytical chemistry was used to determine the percent content of water, fat, and protein for each sample.  If we can establish a predictive relationship between IR spectrum and fat content, then food scientists could predict a sample's fat content instead of using analytical chemistry to determine the content.  This would provide costs savings, since analytical chemistry is a more expensive, time consuming process.
+
+\begin{itemize}
+  \item[] (a) Start \pkg{R} and use these commands to load the data:
+
+<<ch06_tecator_load,eval=FALSE>>=
+library(caret)
+data(tecator)
+# use ?tecator to see more details
+@
+
+  \item[] The matrix \apmstd{absorp} contains the 100 absorbance values for the 215 samples, while matrix \apmstd{endpoints} contains the percent of moisture, fat, and protein in columns 1--3, respectively.
+  \item[] (b) In this example the predictors are the measurements at the individual frequencies.  Because the frequencies lie in a systematic order (850 to 1050 nm), the predictors have a high degree of correlation.  Hence, the data lies in a smaller dimension than the total number of predictors (215).  Use PCA to determine the effective dimension of this data.  What is the effective dimension?
+  \item[] (c) Split the data into a training and a test set, pre--process the data, and build each variety of model described in this chapter.  For those models with tuning parameters, what are the optimal values of the tuning parameter(s)?
+  \item[] (d) Which model has the best predictive ability?  Is any model significantly better or worse than the others?
+  \item[] (e) Explain which model you would use for predicting the fat content of a sample.
+\end{itemize}
+
+\begin{figure}[t]
+  \begin{center}  
+<<ch06_Tecator_plot, echo = FALSE, results='hide', fig.width=6, fig.height=4.5,out.width='.7\\linewidth'>>=
+library(reshape2)
+library(RColorBrewer)
+data(tecator)
+
+## Select a random sample for plots
+set.seed(1)
+inSubset <- sample(1:dim(endpoints)[1], 10)
+
+absorpSubset <- absorp[inSubset,]
+## Save the protein percentage outcome
+endpointSubset <- endpoints[inSubset, 3]
+newOrder <- order(-absorpSubset[,1])
+
+## Order the data from least amount of protein to the most
+absorpSubset <- absorpSubset[newOrder,]
+endpointSubset <- endpointSubset[newOrder]
+
+spectData <- as.data.frame(t(absorpSubset))
+spectData$x <- 1:nrow(spectData)
+spectData2 <- melt(spectData, id.vars = c("x"))
+
+cols <- brewer.pal(9,"YlOrRd")[-(1:2)]
+cols <- colorRampPalette(cols)(10)
+spectTheme <- caretTheme()
+spectTheme$superpose.line$col <- cols
+spectTheme$superpose.line$lwd <- rep(2, 10)
+spectTheme$superpose.line$lty <- rep(1, 10)
+trellis.par.set(spectTheme)
+xyplot(value ~ x,
+             data = spectData2,
+             groups = variable,
+             type = c("l", "g"),
+             panel = function(...) {
+               panel.xyplot(...)
+               panel.text(rep(103.5, nrow(absorpSubset)),
+                          absorpSubset[,ncol(absorpSubset)],
+                          paste(endpointSubset),
+                          cex = .7)
+             },
+             ylab = "Absorption",
+             xlab = "")
+@
+    \caption[Tecator spectrum plots]{A sample of 10 spectrum of the Tecator data. The colors of the curves reflect the absorption values, where yellow indicates low absorption and red is indicative of high absorption.}
+    \label{F:RegressionTecatorSpectrum}
+  \end{center}
+\end{figure}
+
+\subsection*{Solutions}
+
+The full set of principal components can be obtained using the \apmfun{prcomp} function:
+
+<<ch06_meat_pca>>=
+pcaObj <- prcomp(absorp, center = TRUE, scale = TRUE)
+@
+
+To get the percent of variance associated with each component, we can get the standard deviation object:
+
+<<ch06_meat_varcomp>>=
+pctVar <- pcaObj$sdev^2/sum(pcaObj$sdev^2)*100
+head(pctVar)
+@
+
+This indicates that the first components accounts for almost all of the information in the data. Based on this analysis, the true dimensionality is much lower than the number of predictors. However, this is based on a {\em linear} combination of the data; other nonlinear summarizations of the predictors may also be useful. 
+
+There are three endpoints and we will model the third, which is the percentage of protein. Given the sample size, 25$\%$ of the data will be held back for training and five repeats of 10--fold cross--validation will be used to tune the models:
+
+<<ch06_meat_data>>=
+set.seed(1029)
+inMeatTraining <- createDataPartition(endpoints[, 3], p = 3/4, list= FALSE)
+
+absorpTrain <- absorp[ inMeatTraining,]
+absorpTest  <- absorp[-inMeatTraining,]
+proteinTrain <- endpoints[ inMeatTraining, 3]
+proteinTest  <- endpoints[-inMeatTraining,3]
+
+ctrl <- trainControl(method = "repeatedcv", repeats = 5)
+@
+
+To start, a simple linear model was used for these data:
+
+<<ch06_meat_lm, cache=TRUE>>=
+set.seed(529)
+meatLm <- train(x = absorpTrain, y = proteinTrain, method = "lm", trControl = ctrl)
+meatLm
+@
+
+The RMSE is slightly more than 1$\%$. However, it is a fair to assume that the amount of multicolinearity in the predictors is probably degrading performance. For this reason, PCR and PLS models are also trained:
+
+<<ch06_meat_pcr, cache = TRUE>>=
+set.seed(529)
+meatPCR <- train(x = absorpTrain, y = proteinTrain, 
+                 method = "pcr", 
+                 trControl = ctrl, tuneLength = 25)
+@
+<<ch06_meat_pls, cache = TRUE>>=
+set.seed(529)
+meatPLS <- train(x = absorpTrain, y = proteinTrain, 
+                 method = "pls", 
+                 trControl = ctrl, 
+                 preProcess = c("center", "scale"), 
+                 tuneLength = 25)
+## For Figure
+comps <- rbind(meatPLS$results, meatPCR$results)
+comps$Model <- rep(c("PLS", "PCR"), each = 25)
+@
+
+The results are shown in Figure \ref{F:meat_pls}. Both models achieve comparable error rates but the PLS model requires fewer (\Sexpr{meatPLS$bestTune$ncomp}) components. The RMSE for the PLS model was estimated to be \Sexpr{round(getTrainPerf(meatPLS)[1, "TrainRMSE"], 2)}$\%$. 
+
+\begin{figure}
+  \begin{center}  
+<<ch06_meat_pls_plot, echo = FALSE, fig.width=7, fig.height=4.5,out.width='.8\\linewidth'>>=
+bookTheme()
+xyplot(RMSE ~ ncomp, data = comps, 
+       groups = Model, type = c("g", "o"), 
+       auto.key = list(columns = 2), 
+       xlab = "#Components")
+@
+    \caption{The resampling performance profile for the PCR and PLS models built using the Tecator protein data.}
+    \label{F:meat_pls}
+  \end{center}
+\end{figure}
+
+An elastic net model was also tuned over five values of the $L_2$ regularization parameter and the $L_1$ regularization parameter:
+
+<<ch06_meat_enet, cache = TRUE>>=
+set.seed(529)
+meatENet <- train(x = absorpTrain, y = proteinTrain, 
+                  method = "enet", 
+                  trControl = ctrl, 
+                  preProcess = c("center", "scale"), 
+                  tuneGrid = expand.grid(lambda = c(0, .001, .01, .1, 1),
+                                         fraction = seq(0.05, 1, length = 20)))
+@
+
+The final model used $\lambda = \Sexpr{meatENet$bestTune$lambda}$ and a fraction of \Sexpr{meatENet$bestTune$fraction}, which corresponds to retaining \Sexpr{length(predictors(meatENet))} of the \Sexpr{ncol(absorp)} predictors. This parameter combination corresponds to a Lasso model. Figure \ref{F:meat_enet} shows a heat map of the resampled RMSE values across the two tuning parameters. The RMSE associated with the optimal parameters was \Sexpr{round(getTrainPerf(meatENet)[1, "TrainRMSE"], 2)}$\%$.
+
+\begin{figure}[t]
+
+  \begin{center}  
+<<ch06_meat_enet_plot, echo = FALSE, fig.width=7, fig.height=4.5,out.width='.8\\linewidth'>>=
+bookTheme()
+plot(meatENet, plotType = "level")
+@
+    \caption{The resampling performance profile for the elastic net model built using the Tecator protein data.}
+    \label{F:meat_enet}
+  \end{center}
+\end{figure}
+
+Based solely on the resampling statistics, the PLS model would probably be preferred over the Lasso model since it is especially suited to handling highly correlated data. The ordinary linear model, as expected, had the worse performance overall. 
+
+
+<<ch07_save, results='hide', echo = FALSE>>=
+save(meatPLS, file = "meatPLS.RData")
+@
+
+\clearpage
+
+\section*{Exercise 2}
+
+Developing a model to predict permeability (see Sect. 1.4) could save significant resources for a pharmaceutical company, while at the same time more rapidly identifying molecules that have a sufficient permeability to become a drug.
+\begin{itemize}
+  \item[] (a) Start \pkg{R} and use these commands to load the data:
+  
+<<ch06_perm_load>>=
+library(AppliedPredictiveModeling)
+data(permeability)
+@
+
+  \item[] The matrix \apmstd{fingerprints} contains the 1107 binary molecular predictors for the 165 compounds, while  \apmstd{permeability} contains permeability response.
+  \item[] (b) The fingerprint predictors indicate the presence or absence of substructures of a molecule and are often sparse meaning that relatively few of the molecules contain each substructure.  Filter out the predictors that have low frequencies using the \apmfun{nearZeroVar} function from the \pkg{caret} package.  How many predictors are left for modeling?
+  \item[] (c) Split the data into a training and a test set, pre--process the data, and tune a partial least squares model.  How many latent variables are optimal and what is the corresponding resampled estimate of $R^2$?
+  \item[] (d) Predict the response for the test set.  What is the test set estimate of $R^2$?
+  \item[] (e) Try building other models discussed in this chapter.  Do any have better predictive performance?
+  \item[] (f) Would you recommend any of your models to replace the permeability laboratory experiment?
+\end{itemize}
+
+\subsection*{Solutions}
+
+Before pre-processing and modeling the data, let's examine the distribution of the permeability response (left-hand plot in Figure \ref{F:permeabilityDistribution}).  Clearly the distribution is not symmetric, but is skewed-to-the-right.  When the response has this kind of distribution, an appropriate next step is to log-transform the data.  We then should verify if the transformation induced a symmetric distribution (right-hand plot in Figure \ref{F:permeabilityDistribution}).  For this data, the log-transformation did induce an approximately symmetric distribution.  For this problem, we will model the log-transformed response.
+
+\begin{figure}[t]
+  \begin{center}  
+<<ch06_permeabilityDistribution, echo = FALSE, fig.width=8, fig.height=4.5,out.width='.8\\linewidth'>>=
+plotTheme <- bookTheme()
+trellis.par.set(plotTheme)
+h1 <- histogram(permeability, xlab="Permeability")
+h2 <- histogram(log10(permeability), xlab="log10(Permeability)")
+print(h1, split=c(1,1,2,1), more=TRUE)
+print(h2, split=c(2,1,2,1))
+@
+    \caption{The response distribution for the permeability data.}
+    \label{F:permeabilityDistribution}
+  \end{center}
+\end{figure}
+
+Next, let's pre-process the fingerprint predictors to determine how many predictors will be removed and how many will remain for modeling.  The following syntax can be used to identify and remove near-zero variance fingerprint predictors.
+
+<<ch06_perm_nzv, echo = TRUE, eval = TRUE>>=
+#Identify and remove NZV predictors
+nzvFingerprints = nearZeroVar(fingerprints)
+noNzvFingerprints <- fingerprints[,-nzvFingerprints]
+@
+
+In total there are \Sexpr{length(nzvFingerprints)} near-zero variance fingerprints, leaving \Sexpr{ncol(noNzvFingerprints)} left for modeling.  This is a significant reduction from the original matrix, and indicates that many of the fingerprints are describing unique features of very small subsets of molecules.  Because this data set has a small number of samples relative to predictors ($n$=\Sexpr{nrow(noNzvFingerprints)} vs $p$=\Sexpr{ncol(noNzvFingerprints)}), we will hold out 25\% in the test set for evaluating model performance.
+
+<<ch06_PermeabilityTrainTestSplit, echo = TRUE, eval = TRUE>>=
+#Split data into training and test sets
+set.seed(614)
+trainingRows <- createDataPartition(permeability, 
+                                    p = 0.75, 
+                                    list = FALSE)
+
+trainFingerprints <- noNzvFingerprints[trainingRows,]
+trainPermeability <- permeability[trainingRows,]
+
+testFingerprints <- noNzvFingerprints[-trainingRows,]
+testPermeability <- permeability[-trainingRows,]
+@
+
+
+
+<<ch06_permeabilityPLSTune, echo = TRUE, eval = TRUE, cache = TRUE>>=
+set.seed(614)
+ctrl <- trainControl(method = "LGOCV")
+
+plsTune <- train(x = trainFingerprints, y = log10(trainPermeability),
+                 method = "pls",
+                 tuneGrid = expand.grid(ncomp = 1:15),
+                 trControl = ctrl)
+@
+
+Figure \ref{F:permeabilityPLSTunePlot} indicates that the optimal number of latent variables that maximizes $R^2$ is \Sexpr{best(plsTune$results, "Rsquared", maximize = TRUE)}.
+
+\begin{figure}[ht]
+  \begin{center}  
+<<ch06_permeabilityPLSTunePlot, , echo = FALSE, results='hide', fig.width=7, fig.height=4.5,out.width='.8\\linewidth'>>=
+plotTheme <- bookTheme()
+trellis.par.set(plotTheme)
+plot(plsTune,metric="Rsquared")
+@
+  \caption{PLS tuning parameter profile for the permeability data}
+\label{F:permeabilityPLSTunePlot}
+\end{center}
+\end{figure}
+
+
+
+The relationship between the PLS components and the response can be seen in Figure \ref{F:permeabilityPLSComponentVsYield}, where the straight line is the linear regression fit, and the curved line is the loess fit.  For the training data, the first three components are linearly related to log10(permeability).  Each component also contains a noticeable amount of noise relative to predicting the response.
+
+\begin{figure}[ht]
+\begin{center}
+<<ch06_permeabilityPLSCompPlot, echo = FALSE, results='hide', fig.width=8, fig.height=4,out.width='1\\linewidth'>>=
+library(reshape2)  
+plsDat <- data.frame(unclass(scores(plsTune$finalModel)))
+names(plsDat) <- paste("PLS", names(plsDat), sep = ".")
+plsDat$y <- trainPermeability
+
+scoreData <- melt(plsDat[, c("PLS.Comp.1", "PLS.Comp.2", "PLS.Comp.3", "y")], id.vars = "y")
+scoreData$Label <- ""
+scoreData$Label[scoreData$variable == "PLS.Comp.1"] <- "PLS Component 1"
+scoreData$Label[scoreData$variable == "PLS.Comp.2"] <- "PLS Component 2"
+scoreData$Label[scoreData$variable == "PLS.Comp.3"] <- "PLS Component 3"
+
+scoreData$variable <- as.character(scoreData$variable)
+scoreData$Comp <- substring(scoreData$variable, nchar(scoreData$variable))
+
+scatterTheme <- caretTheme()
+
+scatterTheme$plot.line$col <- c("blue")
+scatterTheme$plot.line$lwd <- 2
+
+scatterTheme$plot.symbol$col <- rgb(0, 0, 0, .3)
+scatterTheme$plot.symbol$cex <- 0.8
+scatterTheme$plot.symbol$pch <- 16
+
+scatterTheme$add.text <- list(cex = 0.6)
+
+trellis.par.set(scatterTheme) 
+xyplot(log10(y) ~ value|Label,
+       scoreData,
+       panel = function(...) {
+         theDots <- list(...)
+         panel.xyplot(..., type = c("p", "g","r","smooth"))
+         corr <- round(cor(theDots$x, theDots$y), 2)
+         panel.text(4,
+                    min(theDots$y),
+                    paste("corr:", corr))
+       },
+       layout = c(3,1),
+       as.table = TRUE,
+       ylab = "log10(Permeability)",
+       xlab = "Component Score")
+@
+\caption[PLS manufacturing]{PLS scores versus log10(permeability).}
+\label{F:permeabilityPLSComponentVsYield}
+\end{center}
+\end{figure}
+
+\begin{figure}[ht]
+\begin{center}
+<<ch06_permeabilityPLSMatTest, echo = FALSE, results='hide', fig.width=5, fig.height=5,out.width='0.5\\linewidth'>>=
+plsTest <- data.frame(Observed=log10(testPermeability),Predicted=predict(plsTune,testFingerprints))
+scatterTheme <- caretTheme()
+
+scatterTheme$plot.line$col <- c("blue")
+scatterTheme$plot.line$lwd <- 2
+
+scatterTheme$plot.symbol$col <- rgb(0, 0, 0, .3)
+scatterTheme$plot.symbol$cex <- 0.8
+scatterTheme$plot.symbol$pch <- 16
+
+scatterTheme$add.text <- list(cex = 0.6)
+
+trellis.par.set(scatterTheme)
+xyplot(Predicted ~ Observed,
+       plsTest,
+       panel = function(...) {
+         theDots <- list(...)
+         panel.xyplot(..., type = c("p", "g","r","smooth"))
+         corr <- round(cor(theDots$x, theDots$y), 2)
+         panel.text(44,
+                    min(theDots$y),
+                    paste("corr:", corr))
+       },
+       ylab = "log10(Predicted)",
+       xlab = "log10(Observed)")
+@
+\caption[PLS permeability test]{PLS predictions for the test set for the permeability data.}
+\label{F:permeabilityPLSTestPreds}
+\end{center}
+\end{figure}
+
+Next we will predict the response for the test set and compare the $R^2$ value with the one obtained through leave-group-out cross-validation.  The relationship is displayed in Figure \ref{F:permeabilityPLSTestPreds}, where the $R^2$ value is \Sexpr{round(cor(plsTest$Observed,plsTest$Predicted)^2, 3)}.  Leave-group-out cross-validation estimated that the PLS model would have an $R^2$ value of \Sexpr{round(plsTune$results[best(plsTune$results, "Rsquared", maximize = TRUE), "Rsquared"],3)}.  These values are close, indicating that the leave-group-out cross-validation performance is a good indicator of the performance from a true hold-out set.
+
+<<ch06_permeabilityOtherTune, echo = FALSE, eval = TRUE, cache=TRUE, warning=FALSE>>=
+set.seed(614)
+ctrl <- trainControl(method = "LGOCV")
+ridgeGrid <- data.frame(lambda = seq(0.02, .35, length = 9))
+ridgeTune <- train(x = trainFingerprints, y = log10(trainPermeability),
+                   method = "ridge",
+                   tuneGrid = ridgeGrid,
+                   trControl = ctrl)
+
+enetGrid <- expand.grid(lambda = c(0, 0.05, .1),
+                        fraction = seq(.05, 1, length = 25))
+enetTune <- train(x = trainFingerprints, y = log10(trainPermeability),
+                  method = "enet",
+                  tuneGrid = enetGrid,
+                  trControl = ctrl)
+@
+
+In addition to a PLS model, ridge regression and elastic net models were tuned.  The tuning parameter profiles can be seen in Figures \ref{F:permeabilityRidgeTunePlot} and \ref{F:permeabilityEnetTunePlot}.  For ridge regression, the optimal $R^2$ value is \Sexpr{round(ridgeTune$results[best(ridgeTune$results, "Rsquared", maximize = TRUE), "Rsquared"],3)}, which is obtained at a weight decay value of \Sexpr{ridgeTune$bestTune}.  This shrinkage parameter value is relatively high and drives the coefficients more rapidly towards zero. For the elastic net, the optimal $R^2$ value is \Sexpr{round(enetTune$results[best(enetTune$results, "Rsquared", maximize = TRUE), "Rsquared"],3)}, which is obtained with the fraction of the full solution set at \Sexpr{enetTune$bestTune$fraction} and a weight decay of \Sexpr{enetTune$bestTune$lambda}.  Therefore, the fraction parameter lessens the weight decay, relative to ridge regression.  Clearly, the elastic net solution the best penalized model choice for this problem.
+
+\begin{figure}[ht]
+  \begin{center}  
+<<ch06_permeabilityRidgeTunePlot, echo = FALSE, results='hide', fig.width=5, fig.height=5,out.width='.5\\linewidth'>>=
+plotTheme <- bookTheme()
+#plotTheme$fontsize$text <- 10
+trellis.par.set(plotTheme)
+plot(ridgeTune,metric="Rsquared")
+@
+  \caption{Ridge regression tuning parameter profile for the permeability data.}
+\label{F:permeabilityRidgeTunePlot}
+\end{center}
+\end{figure}
+
+\begin{figure}[ht]
+  \begin{center}  
+<<ch06_permeabilityEnetTunePlot, echo = FALSE, results='hide', fig.width=7, fig.height=4.5,out.width='.8\\linewidth'>>=
+plotTheme <- bookTheme()
+#plotTheme$fontsize$text <- 10
+trellis.par.set(plotTheme)
+plot(enetTune,metric="Rsquared")
+@
+  \caption{Elastic net tuning parameter profile for the permeability data.}
+\label{F:permeabilityEnetTunePlot}
+\end{center}
+\end{figure}
+
+
+\clearpage
+\section*{Exercise 3}
+
+A chemical manufacturing process for a pharmaceutical product was discussed in Sect. 1.4.  In this problem, the objective is to understand the relationship between biological measurements of the raw materials (predictors), measurements of the manufacturing process (predictors) and the response of product yield.  Biological predictors cannot be changed but can be used to assess the quality of the raw material before processing.  On the other hand, manufacturing process predictors can be changed in the manufacturing process.  Improving product yield by $1\%$ will boost revenue by approximately one hundred thousand dollars per batch.
+\begin{itemize}
+  \item[] (a) Start \pkg{R} and use these commands to load the data:
+
+<<ch06_chem_load>>=
+library(AppliedPredictiveModeling)
+data(ChemicalManufacturingProcess)
+@
+
+  \item[] The matrix \apmstd{processPredictors} contains the 57 predictors (12 describing the input biological material, and 45 describing the process predictors) for the 176 manufacturing runs.  \apmstd{yield} contains the percent yield for each run.
+  \item[] (b) A small percentage of cells in the predictor set contain missing values.  Use an imputation function to fill in these missing values (e.g. see Sect. 3.8).
+  \item[] (c) Split the data into a training and a test set, pre--process the data, and tune a model of your choice from this chapter.  What is the optimal value of the performance metric?
+  \item[] (d) Predict the response for the test set.  What is the value of the performance metric and how does this compare with the resampled performance metric on the training set?
+  \item[] (e) Which predictors are most important in the model you have trained?  Do either the biological or process predictors dominate the list?
+  \item[] (f) Explore the relationships between each of the top predictors and the response.  How could this information be helpful in improving yield in future runs of the manufacturing process?
+\end{itemize}
+
+\subsection*{Solutions}
+
+First, let's split the \apmstd{ChemicalManufacturingProcess} data set into the predictors and the response as follows:
+
+<<ch06_chem_xy>>=
+predictors <- subset(ChemicalManufacturingProcess,select= -Yield)
+yield <- subset(ChemicalManufacturingProcess,select="Yield")
+@
+
+Then let's understand some fundamental characteristics of the response and predictors before modeling.  The distribution of the response is presented in Figure \ref{F:yieldDistribution}; it is fairly symmetric and does not need transformation prior to analysis.
+
+\begin{figure}[t]
+  \begin{center}  
+  <<ch06_yieldDistribution, echo = FALSE, fig.width=7, fig.height=4.5,out.width='.8\\linewidth'>>=
+plotTheme <- bookTheme()
+trellis.par.set(plotTheme)
+histogram(~Yield, data=ChemicalManufacturingProcess, xlab="Yield")
+@
+    \caption{The response distribution for the chemical manufacturing data.}
+    \label{F:yieldDistribution}
+  \end{center}
+\end{figure}
+
+Are there any univariate relationships with the response?  Because we have a small number of predictors, we can explore these relationships visually with a correlation plot as seen in Figure \ref{F:cmScatterplotCorrelation}.  The figure shows that many of the biological material predictors are highly positively correlated, and some of the manufacturing process predictors are positively and negatively correlated.  Biological materials 2, 3, 6, and 8, and manufacturing processes 9 and 32 are highly positively correlated with Yield, whereas manufacturing processes 13 and 36 are highly negatively correlated with Yield.
+
+\begin{figure}[ht]
+\begin{center}
+<<ch06_corrPlot1, echo = FALSE, fig.width = 7, fig.height = 7, out.width='.85\\linewidth'>>=
+library(corrplot)
+correlations <- cor(cbind(yield,predictors),use="pairwise.complete.obs")
+corrplot::corrplot(correlations, type="lower", tl.cex = 0.5, mar=c(0,0.2,0,0))
+@
+  \caption{Scatterplot correlation matrix for the chemical manufacturing data.}
+\label{F:cmScatterplotCorrelation}
+\end{center}
+\end{figure}
+
+A small percentage of the predictor set cells are missing.  Specifically, \Sexpr{sum(is.na(predictors))} cells are missing out of \Sexpr{nrow(predictors)*(ncol(predictors))} or \Sexpr{round(100*sum(is.na(predictors))/(nrow(predictors)*(ncol(predictors))),2)} percent.  When we encounter missing cells, we also should investigate if any particular predictors or samples have a higher frequency of missingness.  The top 10 missing predictors are:
+  
+<<ch06_missingPredictors, echo = FALSE, eval = TRUE>>=
+missingCol = sapply(predictors, function(x) sum(is.na(x)))
+missingCol = sort(missingCol,decreasing=TRUE)
+topMissingCol = missingCol[1:10]
+data.frame(Frequency=topMissingCol)
+@
+  
+And the top 10 missing samples are:
+
+<<ch06_missingSamples, echo = FALSE, eval = TRUE>>=
+missingRow = apply(predictors, 1, function(x) sum(is.na(x)))
+missingRow = sort(missingRow,decreasing=TRUE)
+topMissingRow = missingRow[1:10]
+data.frame(Frequency=topMissingRow)
+@
+  
+It may be worthwhile to investigate why rows (samples) 1 and 172-176 have the highest frequency of missingness.  Since no rows or columns have too much missing data, we can impute this information without perturbing the true underlying relationship between the predictors and the response.  Let's first split the data into training (70\%) and test (30\%) sets.  On that data, we will identify the appropriate Box-Cox transformation, centering and scaling parameters, and will impute using the k-nearest neighbor method.  We will then apply those transformations and imputation to the test data.
+
+<<ch06_ppPredictors, echo = TRUE, eval = TRUE>>=
+#Split data into training and test sets
+set.seed(517)
+trainingRows <- createDataPartition(yield$Yield, 
+                                    p = 0.7, 
+                                    list = FALSE)
+
+trainPredictors <- predictors[trainingRows,]
+trainYield <- yield[trainingRows,]
+
+testPredictors <- predictors[-trainingRows,]
+testYield <- yield[-trainingRows,]
+
+#Pre-process trainPredictors and apply to trainPredictors and testPredictors
+pp <- preProcess(trainPredictors,method=c("BoxCox","center","scale","knnImpute"))
+ppTrainPredictors <- predict(pp,trainPredictors)
+ppTestPredictors <- predict(pp,testPredictors)
+@
+
+Next, we should remove near-zero variance and highly correlated predictors.
+
+<<ch06_filterPredictors, echo = TRUE, eval = TRUE>>=
+#Identify and remove NZV
+nzvpp = nearZeroVar(ppTrainPredictors)
+ppTrainPredictors <- ppTrainPredictors[-nzvpp]
+ppTestPredictors <- ppTestPredictors[-nzvpp]
+
+#Identify and remove highly correlated predictors
+predcorr = cor(ppTrainPredictors)
+highCorrpp <- findCorrelation(predcorr)
+ppTrainPredictors <- ppTrainPredictors[, -highCorrpp]
+ppTestPredictors <- ppTestPredictors[, -highCorrpp]
+@
+
+After pre-processing, \Sexpr{ncol(ppTrainPredictors)} predictors remain for modeling.
+
+Given the moderate pairwise correlations that were apparent in Figure \ref{F:cmScatterplotCorrelation}, a dimension reduction or shrinkage technique would be an appropriate model for this data.  Here we will tune a PLS model on the training data using 25 iterations of bootstrap cross-validation.
+
+<<ch06_PLSManTune, , echo = TRUE, eval = TRUE, cache=TRUE>>=
+set.seed(517)
+ctrl <- trainControl(method = "boot", number = 25)
+
+plsTune <- train(x = ppTrainPredictors, y = trainYield,
+                 method = "pls",
+                 tuneLength = 15,
+                 trControl = ctrl)
+@
+
+Figure \ref{F:cmPLSTunePlot} indicates that the optimal number of latent variables that maximizes $R^2$ is \Sexpr{best(plsTune$results, "Rsquared", maximize = TRUE)}.
+
+\begin{figure}[h]
+\begin{center}  
+<<ch06_ex3PLSTune, echo = FALSE, fig.width=7, fig.height=4.5,out.width='.8\\linewidth'>>=
+plotTheme <- bookTheme()
+trellis.par.set(plotTheme)
+plot(plsTune,metric="Rsquared")
+@
+  \caption{PLS tuning parameter profile for the manufacturing data}
+\label{F:cmPLSTunePlot}
+\end{center}
+\end{figure}
+
+
+The relationship between the PLS components and the response can be seen in Figure \ref{F:cmPLSComponentVsYield}, where the straight line is the linear regression fit, and the curved line is the loess fit.  For the training data, the first two components are linearly related to yield with the first component having the stronger relationship with the response.  The third component has a weak relationship with the response and may not be linear as indicated by the loess fit.
+
+\begin{figure}[h]
+\begin{center}
+<<ch06_ex3PLSCompPlot, echo = FALSE, results='hide', fig.width=7.5, fig.height=3.5,out.width='1\\linewidth'>>=
+library(pls)  
+plsDat <- data.frame(unclass(scores(plsTune$finalModel)))
+names(plsDat) <- paste("PLS", names(plsDat), sep = ".")
+plsDat$y <- trainYield
+
+scoreData <- melt(plsDat[, c("PLS.Comp.1", "PLS.Comp.2", "PLS.Comp.3", "y")], id.vars = "y")
+scoreData$Label <- ""
+scoreData$Label[scoreData$variable == "PLS.Comp.1"] <- "PLS Component 1"
+scoreData$Label[scoreData$variable == "PLS.Comp.2"] <- "PLS Component 2"
+scoreData$Label[scoreData$variable == "PLS.Comp.3"] <- "PLS Component 3"
+
+scoreData$variable <- as.character(scoreData$variable)
+scoreData$Comp <- substring(scoreData$variable, nchar(scoreData$variable))
+
+scatterTheme <- caretTheme()
+
+scatterTheme$plot.line$col <- c("blue")
+scatterTheme$plot.line$lwd <- 2
+
+scatterTheme$plot.symbol$col <- rgb(0, 0, 0, .3)
+scatterTheme$plot.symbol$cex <- 0.8
+scatterTheme$plot.symbol$pch <- 16
+
+scatterTheme$add.text <- list(cex = 0.6)
+
+trellis.par.set(scatterTheme)
+xyplot(y ~ value|Label,
+       scoreData,
+       panel = function(...) {
+         theDots <- list(...)
+         panel.xyplot(..., type = c("p", "g","r","smooth"))
+         corr <- round(cor(theDots$x, theDots$y), 2)
+         panel.text(4,
+                    min(theDots$y),
+                    paste("corr:", corr))
+       },
+       layout = c(3,1),
+       as.table = TRUE,
+       ylab = "Yield",
+       xlab = "Component Score")
+@
+\caption[PLS manufacturing]{PLS scores versus response for the manufacturing data.}
+\label{F:cmPLSComponentVsYield}
+\end{center}
+\end{figure}
+
+\begin{figure}[h]
+\begin{center}
+<<ch06_ex3PLSMatTest, echo = FALSE, results='hide', fig.width=5, fig.height=5,out.width='0.6\\linewidth'>>=
+plsTest <- data.frame(Observed=testYield,Predicted=predict(plsTune,ppTestPredictors))
+scatterTheme <- caretTheme()
+
+scatterTheme$plot.line$col <- c("blue")
+scatterTheme$plot.line$lwd <- 2
+
+scatterTheme$plot.symbol$col <- rgb(0, 0, 0, .3)
+scatterTheme$plot.symbol$cex <- 0.8
+scatterTheme$plot.symbol$pch <- 16
+
+scatterTheme$add.text <- list(cex = 0.6)
+
+trellis.par.set(scatterTheme)
+xyplot(Predicted ~ Observed,
+       plsTest,
+       panel = function(...) {
+         theDots <- list(...)
+         panel.xyplot(..., type = c("p", "g","r","smooth"))
+         corr <- round(cor(theDots$x, theDots$y), 2)
+         panel.text(44,
+                    min(theDots$y),
+                    paste("corr:", corr))
+       },
+       ylab = "Predicted",
+       xlab = "Observed")
+@
+\caption[PLS manufacturing test]{PLS predictions for the test set for the manufacturing data.}
+\label{F:cmPLSTestPreds}
+\end{center}
+\end{figure}
+
+Next we will predict the response for the test set and compare the $R^2$ value with the one obtained through bootstrap cross-validation.  The relationship is displayed in Figure \ref{F:cmPLSTestPreds}, where the $R^2$ value is \Sexpr{round(cor(plsTest$Observed,plsTest$Predicted)^2, 3)}.  Bootstrap cross-validation estimated that a three-component PLS model would have an $R^2$ value of \Sexpr{round(plsTune$results[best(plsTune$results, "Rsquared", maximize = TRUE), "Rsquared"],3)}.
+
+Next, let's examine the variable importance values for the top 15 predictors for this data and model (Figure \ref{F:cmPLSVI}).  For this data, the manufacturing process predictors dominate the top part of the list.  This may be helpful for improving yield, since many of the manufacturing predictors can be controlled.
+
+\begin{figure}[h]
+\begin{center}
+<<ch06_ex3PLSImp, echo = FALSE, results='hide', fig.width=8, fig.height=6,out.width='0.8\\linewidth'>>=
+plsImp <- varImp(plsTune, scale = FALSE)
+bookTheme()
+plot(plsImp, top=15, scales = list(y = list(cex = 0.8)))
+@
+\caption[PLS Importance]{PLS variable importance scores for the manufacturing data.}
+\label{F:cmPLSVI}
+\end{center}
+\end{figure}
+
+\begin{figure}[h]
+\begin{center}  
+<<ch06_ex3PLSTopImp, echo = FALSE, results='hide', fig.width=7.5, fig.height=4,out.width='1\\linewidth'>>=
+viporder <- order(abs(plsImp$importance),decreasing=TRUE)
+scatterTheme <- caretTheme()
+
+scatterTheme$plot.line$col <- "red"
+scatterTheme$plot.line$lwd <- 2
+
+scatterTheme$plot.symbol$col <- "black"
+scatterTheme$plot.symbol$cex <- .6
+
+scatterTheme$add.text <- list(cex = .6)
+
+trellis.par.set(scatterTheme)
+
+topVIP = rownames(plsImp$importance)[viporder[c(1:3)]]
+
+featurePlot(ppTrainPredictors[, topVIP],
+            trainYield,
+            plot = "scatter",
+            between = list(x = 1, y = 1),
+            type = c("g", "p", "smooth"),
+            layout = c(3,1),
+            labels = rep("", 2))
+@
+\caption[Top Corr Manufacturing Scatterplots]{Scatter plots of the top 3 correlated predictors in the manufacturing data set after pre-processing.}
+\label{F:cmPLSTopVIP}
+\end{center}
+\end{figure}
+
+Finally, let's explore the relationships between the three top important predictors and the response.  Figure \ref{F:cmPLSTopVIP} provides the univariate relationships with each of these predictors (after transformation) and the response.  Clearly Process 9 and Process 32 have a positive relationship with Yield, while Process 13 has a negative relationship.  If these manufacturing processes can be controlled, then altering these steps in the process to have higher (or lower) values could improve the overall Yield of the process.  A statistically designed experiment could be used to investigate a causal relationship between the settings of these processes and the overall yield.
+
+\clearpage
+\section*{Session Info}
+
+<<ch06_session, echo = FALSE, results='asis'>>=
+toLatex(sessionInfo())
+@
+
+
+\bibliographystyle{ECA_jasa}
+\bibliography{Ch_06_Ex_sol}
+
+
+\end{document}
+
+
+
+ 
