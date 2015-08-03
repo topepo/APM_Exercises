@@ -278,16 +278,19 @@ xyplot(RMSE ~ ncomp, data = comps,
 An elastic net model was also tuned over five values of the $L_2$ regularization parameter and the $L_1$ regularization parameter:
 
 <<ch06_meat_enet, cache = TRUE>>=
+fractionTune = c(seq(.005, .03,.005),seq(.04,.1,0.02),seq(0.2,1,0.2))
+lambdaTune = c(0, .001, .01, .1, 1)
+
 set.seed(529)
 meatENet <- train(x = absorpTrain, y = proteinTrain, 
                   method = "enet", 
                   trControl = ctrl, 
                   preProcess = c("center", "scale"), 
-                  tuneGrid = expand.grid(lambda = c(0, .001, .01, .1, 1),
-                                         fraction = seq(0.05, 1, length = 20)))
+                  tuneGrid = expand.grid(lambda = lambdaTune,
+                                         fraction = fractionTune))
 @
 
-The final model used $\lambda = \Sexpr{meatENet$bestTune$lambda}$ and a fraction of \Sexpr{meatENet$bestTune$fraction}, which corresponds to retaining \Sexpr{length(predictors(meatENet))} of the \Sexpr{ncol(absorp)} predictors. This parameter combination corresponds to a Lasso model. Figure \ref{F:meat_enet} shows a heat map of the resampled RMSE values across the two tuning parameters. The RMSE associated with the optimal parameters was \Sexpr{round(getTrainPerf(meatENet)[1, "TrainRMSE"], 2)}$\%$.
+The final model used $\lambda = \Sexpr{meatENet$bestTune$lambda}$ and a fraction of \Sexpr{meatENet$bestTune$fraction}. This parameter combination corresponds to a Lasso model. Figure \ref{F:meat_enet} shows a heat map of the resampled RMSE values across the two tuning parameters. The RMSE associated with the optimal parameters was \Sexpr{round(getTrainPerf(meatENet)[1, "TrainRMSE"], 2)}$\%$.
 
 \begin{figure}[t]
 
@@ -301,7 +304,7 @@ plot(meatENet, plotType = "level")
   \end{center}
 \end{figure}
 
-Based solely on the resampling statistics, the PLS model would probably be preferred over the Lasso model since it is especially suited to handling highly correlated data. The ordinary linear model, as expected, had the worse performance overall. 
+Based on the resampling statistics, the PLS model and Lasso performed best for this dataset. The ordinary linear model, as expected, had the worse performance overall. 
 
 
 <<ch07_save, results='hide', echo = FALSE>>=
