@@ -316,7 +316,7 @@ For this part of the solution to this problem, we will look at the relationship 
 table(Soybean2$date, useNA = "always")
 Soybean2$date <- recode(Soybean2$date, 
                        "0 ='apr';1='may';2='june';3='july';4='aug';5='sept';6='oct';NA = 'missing'",
-                       levels = c("apr", "may", "june", "july", "aug", "sept", "missing"))
+                       levels = c("apr", "may", "june", "july", "aug", "sept", "oct", "missing"))
 table(Soybean2$date)
 
 table(Soybean2$precip, useNA = "always")
